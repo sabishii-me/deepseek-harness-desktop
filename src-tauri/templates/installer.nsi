@@ -99,6 +99,7 @@ OutFile "${OUTFILE}"
 ; We don't actually use this value as default install path,
 ; it's just for nsis to append the product name folder in the directory selector
 ; https://nsis.sourceforge.io/Reference/InstallDir
+!define SABISHII_INSTALL_SUBDIR "Sabishii.dev\${PRODUCTNAME}"
 !define PLACEHOLDER_INSTALL_DIR "placeholder\${PRODUCTNAME}"
 InstallDir "${PLACEHOLDER_INSTALL_DIR}"
 
@@ -128,7 +129,7 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 
 !if "${INSTALLMODE}" == "both"
   !define MULTIUSER_MUI
-  !define MULTIUSER_INSTALLMODE_INSTDIR "${PRODUCTNAME}"
+  !define MULTIUSER_INSTALLMODE_INSTDIR "${SABISHII_INSTALL_SUBDIR}"
   !define MULTIUSER_INSTALLMODE_COMMANDLINE
   !if "${ARCH}" == "x64"
     !define MULTIUSER_USE_PROGRAMFILES64
@@ -629,17 +630,17 @@ Function .onInit
     !if "${INSTALLMODE}" == "perMachine"
       ${If} ${RunningX64}
         !if "${ARCH}" == "x64"
-          StrCpy $INSTDIR "$PROGRAMFILES64\${PRODUCTNAME}"
+          StrCpy $INSTDIR "$PROGRAMFILES64\${SABISHII_INSTALL_SUBDIR}"
         !else if "${ARCH}" == "arm64"
-          StrCpy $INSTDIR "$PROGRAMFILES64\${PRODUCTNAME}"
+          StrCpy $INSTDIR "$PROGRAMFILES64\${SABISHII_INSTALL_SUBDIR}"
         !else
-          StrCpy $INSTDIR "$PROGRAMFILES\${PRODUCTNAME}"
+          StrCpy $INSTDIR "$PROGRAMFILES\${SABISHII_INSTALL_SUBDIR}"
         !endif
       ${Else}
-        StrCpy $INSTDIR "$PROGRAMFILES\${PRODUCTNAME}"
+        StrCpy $INSTDIR "$PROGRAMFILES\${SABISHII_INSTALL_SUBDIR}"
       ${EndIf}
     !else if "${INSTALLMODE}" == "currentUser"
-      StrCpy $INSTDIR "$LOCALAPPDATA\${PRODUCTNAME}"
+      StrCpy $INSTDIR "$LOCALAPPDATA\${SABISHII_INSTALL_SUBDIR}"
     !endif
 
     Call RestorePreviousInstallLocation
