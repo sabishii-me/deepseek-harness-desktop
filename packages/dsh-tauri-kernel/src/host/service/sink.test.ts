@@ -1,3 +1,6 @@
+import * as childProcess from 'node:child_process'
+import { createJouzuSession } from '../backends/jouzu'
+import { ProcessFixture } from '../backends/process.fixture'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
@@ -29,6 +32,8 @@ import { server } from '../server'
 import { identity } from './identity'
 import { session as bridgeSession } from './session'
 import { sink } from './sink'
+
+vi.mock('node:child_process', { spy: true })
 
 const currentPackage: string = 'dsh-session-current'
 const sessionModule = await import(currentPackage) as unknown as typeof import('@deepseek-ai/dsh-session') & Required<Pick<RuntimeModules, 'appendPluginRecord' | 'pluginRecordOf'>>
@@ -215,6 +220,53 @@ afterEach(async () => {
 })
 
 describe('real official cross-step native sink', () => {
+  it.each([false, true])('runs Jouzu RPC through the official sink, preserving native recovery (tool error=%s)', async (toolError) => {
+    const inherited = inheritedTool('bash')
+    nativeScript = async (native, messages, signal) => {
+      const fixture = new ProcessFixture((frame) => {
+        if (frame.type === 'get_state') {
+          fixture.send({ id: frame.id, type: 'response', success: true, data: { sessionId: 'jouzu-real-sink' } })
+        }
+        if (frame.type === 'prompt') {
+          fixture.send({ id: frame.id, type: 'response', success: true, data: { disposition: 'started' } })
+          queueMicrotask(() => {
+            const delta = (event: Record<string, unknown>) => fixture.send({ type: 'message_update', assistantMessageEvent: event })
+            fixture.send({ type: 'turn_start' })
+            delta({ type: 'thinking_delta', contentIndex: 0, delta: 'Checking repository.' })
+            delta({ type: 'toolcall_end', contentIndex: 1, toolCall: { id: 'jouzu-git', name: 'bash', arguments: { command: 'git status' } } })
+            delta({ type: 'toolcall_end', contentIndex: 2, toolCall: { id: 'jouzu-pwd', name: 'bash', arguments: { command: 'pwd' } } })
+            delta({ type: 'thinking_end', contentIndex: 0, content: 'Checking repository.' })
+            fixture.send({ type: 'tool_execution_start', toolCallId: 'jouzu-git', toolName: 'bash', args: { command: 'git status' } })
+            fixture.send({ type: 'tool_execution_start', toolCallId: 'jouzu-pwd', toolName: 'bash', args: { command: 'pwd' } })
+            fixture.send({ type: 'tool_execution_end', toolCallId: 'jouzu-pwd', result: { content: [{ type: 'text', text: '/workspace' }] }, isError: false })
+            fixture.send({ type: 'tool_execution_end', toolCallId: 'jouzu-git', result: { content: [{ type: 'text', text: 'working tree clean' }] }, isError: toolError })
+            fixture.send({ type: 'turn_end' })
+            fixture.send({ type: 'turn_start' })
+            delta({ type: 'text_delta', contentIndex: 0, delta: 'The working tree is clean.' })
+            delta({ type: 'text_end', contentIndex: 0, content: 'The working tree is clean.' })
+            fixture.send({ type: 'turn_end' })
+            fixture.send({ type: 'agent_settled' })
+          })
+        }
+      })
+      const spawn = vi.mocked(childProcess.spawn).mockReturnValue(fixture.child)
+      const jouzu = await createJouzuSession({ file: 'node', args: [] }, process.cwd(), null, native, signal)
+      try {
+        await jouzu.submit(messages, signal)
+      }
+      finally {
+        await jouzu.dispose()
+        spawn.mockRestore()
+      }
+    }
+    await runTurn()
+    await runTurn()
+    expect(errors).toEqual([])
+    expect(inherited).not.toHaveBeenCalled()
+    expect(toolResults().some(event => event.data.message.content.some(block => block.type === 'text' && block.text === 'working tree clean'))).toBe(true)
+    expect(assistants().some(event => event.data.message.content.some(block => block.type === 'text' && block.text === 'The working tree is clean.'))).toBe(true)
+  })
+
   it('settles a full terminal queue with done, one wake, and a retained overflow failure', async () => {
     const current = await exchange()
     const native = current.state.native

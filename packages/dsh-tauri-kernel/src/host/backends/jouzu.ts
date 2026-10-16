@@ -1,6 +1,6 @@
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import type { NativeModelCatalog, NativeTurnOptions } from '../../shared/native-model'
-import type { NativeAttachments, NativeCommand, NativePermission, NativeSession, NativeSessionOpenOptions, NativeSink } from './types'
+import type { NativeAttachments, NativeCommand, NativePermission, NativeContent, NativeSession, NativeSessionOpenOptions, NativeSink } from './types'
 import { randomUUID } from 'node:crypto'
 import { deferred, errorFrom, JsonLinesProcess, NativeBridgeError, nativeRuns, PendingRequests, record } from './transport'
 import { nativeEnvironment } from '../utils/detection'
@@ -34,12 +34,25 @@ import { nativeEnvironment } from '../utils/detection'
 interface JouzuRun {
   readonly result: { promise: Promise<void>, resolve: () => void, reject: (error: Error) => void }
   readonly signal: AbortSignal
-  /** Tool-call argument fragments keyed by content index. */
-  readonly fragments: Map<number, string>
+  /**
+   * Zero-based turn counter within this run.
+   *
+   * Jouzu restarts `contentIndex` at 0 for every turn, and a tool round ends
+   * one turn and begins another, so the index alone is not unique across a
+   * run. Lane ids combine this counter with the index; reusing a lane after it
+   * was settled is rejected by the official sink as
+   * `BRIDGE_ASSISTANT_ALREADY_SETTLED`.
+   */
+  segment: number
+  /** Whether the current segment has already carried content. */
+  usedSegment: boolean
+  /** Tool-call argument fragments keyed by lane. */
+  readonly fragments: Map<string, string>
   /** Tool calls announced by the assistant and awaiting their execution events. */
   readonly announced: Set<string>
   /** Arguments as presented to the official sink, keyed by tool-call id. */
   readonly presented: Map<string, string>
+  readonly pendingCalls: { lane: string, content: NativeContent }[]
   settled: boolean
   failure?: Error
 }
@@ -47,6 +60,8 @@ interface JouzuRun {
 export async function createJouzuSession(command: NativeCommand, cwd: string, nativeSessionId: string | null, sink: NativeSink, signal: AbortSignal, options?: NativeSessionOpenOptions, _attachments?: NativeAttachments): Promise<NativeSession> {
   if (options?.forkFrom !== undefined && (nativeSessionId !== null || options.forkFrom === ''))
     throw new NativeBridgeError('BRIDGE_FORK_INVALID', 'Jouzu fork requires a source session and no existing native binding')
+  if (options?.forkFrom !== undefined)
+    throw new NativeBridgeError('BRIDGE_FORK_UNSUPPORTED', 'Jouzu kernel fork is not implemented; the source session was not changed.')
   const session = new JouzuSession(command, cwd, sink, nativeSessionId)
   try {
     await session.open(signal)
@@ -161,24 +176,39 @@ class JouzuSession implements NativeSession {
     const run: JouzuRun = {
       result: deferred<void>(),
       signal,
+      segment: 0,
+      usedSegment: false,
       fragments: new Map(),
       announced: new Set(),
       presented: new Map(),
+      pendingCalls: [],
       settled: false,
     }
     this.active = run
+    let abortTimer: ReturnType<typeof setTimeout> | undefined
     const onAbort = (): void => {
-      // Jouzu cancels cooperatively; the turn settles when it reports back.
-      void this.send('abort', {}, AbortSignal.timeout(5_000)).catch(() => {})
+      if (abortTimer !== undefined)
+        return
+      const reason = signal.reason instanceof Error ? signal.reason : new NativeBridgeError('BRIDGE_ABORTED', 'Jouzu turn cancelled')
+      // Allow cooperative shutdown, then fail and close this child. Never leave
+      // the official turn waiting indefinitely for a native settlement event.
+      abortTimer = setTimeout(() => {
+        this.transport.fail(reason)
+        void this.transport.close().catch(() => {})
+      }, 5_000)
+      void this.send('abort', {}, AbortSignal.timeout(5_000)).catch((error) => {
+        this.transport.fail(errorFrom(error))
+      })
     }
     signal.addEventListener('abort', onAbort, { once: true })
     try {
-      this.transport.write({ id: randomUUID(), type: 'prompt', message: text })
+      await this.send('prompt', { message: text }, signal)
       await run.result.promise
       if (run.failure)
         throw run.failure
     }
     finally {
+      clearTimeout(abortTimer)
       signal.removeEventListener('abort', onAbort)
       if (this.active === run)
         this.active = undefined
@@ -255,6 +285,11 @@ class JouzuSession implements NativeSession {
       return
     }
     if (type === 'tool_execution_start') {
+      // Tool-call deltas may finish before reasoning/text blocks finish.
+      // Present calls at execution time, after the assistant message is done,
+      // instead of crossing an official tool boundary with an open stream.
+      for (const pending of run.pendingCalls.splice(0))
+        this.sink.assistant(pending.lane, [pending.content])
       const callId = typeof message.toolCallId === 'string' ? message.toolCallId : undefined
       const name = typeof message.toolName === 'string' ? message.toolName : undefined
       if (callId === undefined || name === undefined)
@@ -275,15 +310,22 @@ class JouzuSession implements NativeSession {
         return
       run.announced.delete(callId)
       const failed = message.isError === true
-      if (failed && run.failure === undefined)
-        run.failure = new NativeBridgeError('BRIDGE_NATIVE_TOOL', toolResultText(message.result) || 'Jouzu tool failed')
       this.sink.toolEnd(callId, toolResultText(message.result), failed)
       return
     }
     // `turn_end` closes one tool-loop round, not the whole run: a turn that
     // calls a tool emits `turn_end` and then starts another turn for the
     // result. Only `agent_settled` marks the point at which Jouzu has nothing
-    // further to say, so that is the sole completion signal.
+    // further to say, so that is the sole completion signal. Each new turn
+    // advances the segment, which keeps lane ids unique across the run.
+    if (type === 'turn_start') {
+      // The first turn keeps segment 0; every later turn advances it so lanes
+      // stay unique even though Jouzu restarts contentIndex at 0.
+      if (run.usedSegment)
+        run.segment++
+      run.usedSegment = true
+      return
+    }
     if (type === 'agent_settled') {
       if (run.settled)
         return
@@ -295,7 +337,7 @@ class JouzuSession implements NativeSession {
   private projectDelta(run: JouzuRun, event: Record<string, unknown>): void {
     const kind = typeof event.type === 'string' ? event.type : undefined
     const index = typeof event.contentIndex === 'number' ? event.contentIndex : 0
-    const lane = `jouzu:${index}`
+    const lane = `jouzu:${run.segment}:${index}`
     switch (kind) {
       case 'text_delta': {
         if (typeof event.delta === 'string' && event.delta !== '')
@@ -320,17 +362,17 @@ class JouzuSession implements NativeSession {
         return
       }
       case 'toolcall_start': {
-        run.fragments.set(index, '')
+        run.fragments.set(lane, '')
         return
       }
       case 'toolcall_delta': {
         if (typeof event.delta === 'string')
-          run.fragments.set(index, (run.fragments.get(index) ?? '') + event.delta)
+          run.fragments.set(lane, (run.fragments.get(lane) ?? '') + event.delta)
         return
       }
       case 'toolcall_end': {
-        const fragments = run.fragments.get(index) ?? ''
-        run.fragments.delete(index)
+        const fragments = run.fragments.get(lane) ?? ''
+        run.fragments.delete(lane)
         const call = record(event.toolCall ?? {})
         const id = typeof call.id === 'string' ? call.id : undefined
         const name = typeof call.name === 'string' ? call.name : undefined
@@ -340,7 +382,7 @@ class JouzuSession implements NativeSession {
         // JSON fragments accumulated above; prefer the object when present.
         const arguments_ = call.arguments === undefined ? fragments || '{}' : compact(call.arguments)
         run.presented.set(id, arguments_)
-        this.sink.assistant(lane, [{ type: 'tool-call', id, name, arguments: arguments_ }])
+        run.pendingCalls.push({ lane, content: { type: 'tool-call', id, name, arguments: arguments_ } })
         return
       }
       default:

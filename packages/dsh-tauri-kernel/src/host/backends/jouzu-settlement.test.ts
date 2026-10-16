@@ -58,8 +58,8 @@ describe('jouzu assistant settlement', () => {
     fixture.send({ type: 'agent_settled' })
     await turn
 
-    expect(sink.assistant).toHaveBeenCalledWith('jouzu:0', [{ type: 'thinking', text: 'ponder' }])
-    expect(sink.assistant).toHaveBeenCalledWith('jouzu:1', [{ type: 'text', text: 'hello' }])
+    expect(sink.assistant).toHaveBeenCalledWith('jouzu:0:0', [{ type: 'thinking', text: 'ponder' }])
+    expect(sink.assistant).toHaveBeenCalledWith('jouzu:0:1', [{ type: 'text', text: 'hello' }])
   })
 
   it('presents a tool call before announcing it started', async () => {
@@ -84,7 +84,7 @@ describe('jouzu assistant settlement', () => {
     // The presented arguments must be byte-identical to the ones used for
     // toolStart, because the official sink compares them for equality.
     const presented = JSON.stringify(args)
-    expect(sink.assistant).toHaveBeenCalledWith('jouzu:0', [{ type: 'tool-call', id: 'call-1', name: 'bash', arguments: presented }])
+    expect(sink.assistant).toHaveBeenCalledWith('jouzu:0:0', [{ type: 'tool-call', id: 'call-1', name: 'bash', arguments: presented }])
     expect(sink.toolStart).toHaveBeenCalledWith('call-1', 'bash', presented)
     expect(sink.toolEnd).toHaveBeenCalledWith('call-1', 'hi\n', false)
   })
@@ -138,6 +138,66 @@ describe('jouzu turn completion', () => {
     await turn
     expect(settled).toBe(true)
     expect(sink.toolEnd).toHaveBeenCalledWith('call-1', 'clean\n', false)
-    expect(sink.assistant).toHaveBeenCalledWith('jouzu:0', [{ type: 'text', text: 'Clean tree.' }])
+    expect(sink.assistant).toHaveBeenCalledWith('jouzu:1:0', [{ type: 'text', text: 'Clean tree.' }])
+  })
+})
+
+/**
+ * Jouzu restarts `contentIndex` at 0 on every turn, and a tool round ends one
+ * turn and begins another. Lane ids therefore cannot be built from the index
+ * alone: the second turn's `contentIndex=0` would reuse the first turn's lane,
+ * which the official sink rejects with `BRIDGE_ASSISTANT_ALREADY_SETTLED`.
+ *
+ * Measured for a tool-using prompt:
+ *   turn_start, thinking_start(0), toolcall_start(1), thinking_end(0),
+ *   toolcall_end(1), tool_execution_*, turn_end,
+ *   turn_start, text_start(0), text_end(0), turn_end, agent_settled
+ */
+describe('jouzu lane identity', () => {
+  it('keeps lanes distinct when contentIndex restarts on the next turn', async () => {
+    const fixture = jouzuProcess()
+    const sink = createSink()
+    // Unlike a bare spy, enforce the sink's single-commit identity contract.
+    const committed = new Set<string>()
+    sink.assistant.mockImplementation((id) => {
+      if (committed.has(id))
+        throw new Error('BRIDGE_ASSISTANT_ALREADY_SETTLED')
+      committed.add(id)
+    })
+    sink.text.mockImplementation((id) => {
+      if (committed.has(id))
+        throw new Error('BRIDGE_ASSISTANT_ALREADY_SETTLED')
+    })
+
+    vi.mocked(spawn).mockReturnValue(fixture.child)
+    const session = await createJouzuSession(command, 'C:/fixture', null, sink, new AbortController().signal)
+    sessions.push(session)
+
+    const prompted = fixture.next(frame => frame.type === 'prompt')
+    const turn = session.submit([userMessage('run git status')], new AbortController().signal)
+    await prompted
+
+    const args = { command: 'git status' }
+    fixture.send({ type: 'turn_start' })
+    fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'thinking_start', contentIndex: 0 } })
+    fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'thinking_end', contentIndex: 0, content: 'checking' } })
+    fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'toolcall_start', contentIndex: 1, id: 'call-1', toolName: 'bash' } })
+    fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'toolcall_end', contentIndex: 1, toolCall: { type: 'toolCall', id: 'call-1', name: 'bash', arguments: args } } })
+    fixture.send({ type: 'tool_execution_start', toolCallId: 'call-1', toolName: 'bash', args })
+    fixture.send({ type: 'tool_execution_end', toolCallId: 'call-1', toolName: 'bash', result: { content: [{ type: 'text', text: 'clean\n' }] }, isError: false })
+    fixture.send({ type: 'turn_end' })
+    // Second turn restarts contentIndex at 0.
+    fixture.send({ type: 'turn_start' })
+    fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'text_start', contentIndex: 0 } })
+    fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'Clean tree.' } })
+    fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'text_end', contentIndex: 0, content: 'Clean tree.' } })
+    fixture.send({ type: 'turn_end' })
+    fixture.send({ type: 'agent_settled' })
+    await turn
+
+    const lanes = sink.assistant.mock.calls.map(call => call[0])
+    expect(new Set(lanes).size).toBe(lanes.length)
+    expect(lanes).toContain('jouzu:0:0')
+    expect(lanes).toContain('jouzu:1:0')
   })
 })

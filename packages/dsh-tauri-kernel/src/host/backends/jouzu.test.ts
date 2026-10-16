@@ -84,8 +84,8 @@ describe('jouzu native kernel', () => {
     fixture.send({ type: 'agent_settled' })
     await turn
 
-    expect(sink.thinking).toHaveBeenCalledWith('jouzu:0', 'planning')
-    expect(sink.text).toHaveBeenCalledWith('jouzu:1', 'hello')
+    expect(sink.thinking).toHaveBeenCalledWith('jouzu:0:0', 'planning')
+    expect(sink.text).toHaveBeenCalledWith('jouzu:0:1', 'hello')
   })
 
   it('reports tool execution start and end with the tool output', async () => {
@@ -139,7 +139,7 @@ describe('jouzu native kernel', () => {
     fixture.send({ type: 'agent_settled' })
     await turn
 
-    expect(sink.text).toHaveBeenCalledWith('jouzu:0', 'ok')
+    expect(sink.text).toHaveBeenCalledWith('jouzu:0:0', 'ok')
   })
 
   it('rejects a resume that lands on a different Jouzu session', async () => {
@@ -188,5 +188,51 @@ describe('jouzu resume', () => {
     const session = await createJouzuSession(command, 'C:/fixture', sessionId, createSink(), new AbortController().signal)
     sessions.push(session)
     expect(fixture.frames.some(frame => frame.type === 'switch_session')).toBe(false)
+  })
+})
+
+
+describe('jouzu rejected prompt', () => {
+  it('rejects submit when RPC preflight rejects, without waiting for agent_settled', async () => {
+    const fixture = new ProcessFixture((frame) => {
+      if (frame.type === 'get_state')
+        fixture.send({ id: frame.id, type: 'response', success: true, data: { sessionId: 'rejected-prompt' } })
+      if (frame.type === 'prompt')
+        fixture.send({ id: frame.id, type: 'response', success: false, error: 'Model unavailable' })
+    })
+    vi.mocked(spawn).mockReturnValue(fixture.child)
+    const session = await createJouzuSession(command, 'C:/fixture', null, createSink(), new AbortController().signal)
+    sessions.push(session)
+    await expect(session.submit([userMessage('hello')], new AbortController().signal))
+      .rejects.toMatchObject({ code: 'BRIDGE_NATIVE_REQUEST', message: 'Model unavailable' })
+  })
+})
+
+describe('jouzu cancellation', () => {
+  it('closes an unresponsive child instead of waiting forever after abort', async () => {
+    vi.useFakeTimers()
+    const fixture = new ProcessFixture((frame) => {
+      if (frame.type === 'get_state')
+        fixture.send({ id: frame.id, type: 'response', success: true, data: { sessionId: 'abort-test' } })
+      if (frame.type === 'prompt' || frame.type === 'abort')
+        fixture.send({ id: frame.id, type: 'response', success: true })
+    })
+    vi.mocked(spawn).mockReturnValue(fixture.child)
+    const session = await createJouzuSession(command, 'C:/fixture', null, createSink(), new AbortController().signal)
+    const controller = new AbortController()
+    try {
+      const turn = session.submit([userMessage('work')], controller.signal)
+      const rejected = expect(turn).rejects.toThrow('test cancellation')
+      await vi.advanceTimersByTimeAsync(0)
+      controller.abort(new Error('test cancellation'))
+      await vi.advanceTimersByTimeAsync(6_000)
+      await rejected
+      expect(fixture.frames.some(frame => frame.type === 'abort')).toBe(true)
+      expect(fixture.kill).toHaveBeenCalled()
+    }
+    finally {
+      vi.useRealTimers()
+      await session.dispose()
+    }
   })
 })
