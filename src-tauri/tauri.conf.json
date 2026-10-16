@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "DSH Tauri",
+  "productName": "DSH-Desktop",
   "version": "0.24.1",
-  "identifier": "dsh-tauri",
+  "identifier": "dev.sabishii.dshdesktop",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,10 @@
   "app": {
     "macOSPrivateApi": true,
     "security": {
-      "assetProtocol": { "enable": true, "scope": [] },
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      },
       "csp": "default-src 'self'; connect-src 'self' asset: http://asset.localhost https://asset.localhost ipc: http://ipc.localhost http://127.0.0.1:*; img-src 'self' asset: http://asset.localhost data: blob: https://*.githubusercontent.com; media-src 'self' asset: http://asset.localhost https://asset.localhost data: blob: https://*.githubusercontent.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; frame-src http://127.0.0.1:*",
       "devCsp": "default-src 'self'; connect-src 'self' asset: http://asset.localhost https://asset.localhost ipc: http://ipc.localhost http://localhost:1420 ws://localhost:1421 http://127.0.0.1:*; img-src 'self' asset: http://asset.localhost data: blob: https://*.githubusercontent.com; media-src 'self' asset: http://asset.localhost https://asset.localhost data: blob: https://*.githubusercontent.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; frame-src http://127.0.0.1:*"
     }
@@ -20,12 +23,14 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["dsh"]
+        "schemes": [
+          "dsh"
+        ]
       }
     },
     "notifications": {
       "windows": {
-        "toastActivatorClsid": "4FBB68DF-E119-4FBB-82D5-FA10F85B519B",
+        "toastActivatorClsid": "C6BA6D4B-A5BC-42BF-A09A-5D10B871DAD0",
         "iconPath": "icons/32x32.png"
       }
     }
@@ -41,10 +46,13 @@
       "icons/icon.ico",
       "icons/icon.png"
     ],
-    "resources": ["resources/**/*", "icons/32x32.png"],
+    "resources": [
+      "resources/**/*",
+      "icons/32x32.png"
+    ],
     "licenseFile": "licenses/INSTALLER-LICENSE.txt",
     "category": "DeveloperTool",
-    "copyright": "Copyright © 2026 Deepseek Harness Desktop contributors",
+    "copyright": "Copyright \u00a9 2026 Deepseek Harness Desktop contributors",
     "macOS": {
       "minimumSystemVersion": "12.0",
       "hardenedRuntime": true,
@@ -56,27 +64,38 @@
         "bundleMediaFramework": true
       },
       "deb": {
-        "depends": ["gstreamer1.0-plugins-good", "gstreamer1.0-plugins-bad"],
-        "conflicts": ["deepseek-harness-desktop"],
-        "replaces": ["deepseek-harness-desktop"]
+        "depends": [
+          "gstreamer1.0-plugins-good",
+          "gstreamer1.0-plugins-bad"
+        ],
+        "conflicts": [],
+        "replaces": []
       }
     },
     "windows": {
       "nsis": {
         "template": "templates/installer.nsi",
-        "languages": ["English", "SimpChinese"],
+        "languages": [
+          "English",
+          "SimpChinese"
+        ],
         "displayLanguageSelector": false,
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico"
       },
       "wix": {
-        "upgradeCode": "d6340322-9fd6-54cd-a64f-28a2ade67a65",
-        "language": ["en-US", "zh-CN"],
-        "fragmentPaths": ["./windows/fragments/autostart-cleanup.wxs"],
-        "componentRefs": ["CleanupLegacyShortcuts"]
+        "upgradeCode": "69e20d91-6ff6-480d-a2a3-74acaacda135",
+        "language": [
+          "en-US",
+          "zh-CN"
+        ],
+        "fragmentPaths": [],
+        "componentRefs": []
       }
     },
     "shortDescription": "Desktop application for DeepSeek Harness",
-    "longDescription": "A native desktop application for running DeepSeek Harness (dsh) locally with one-click install and zero configuration."
-  }
+    "longDescription": "A native desktop application for running DeepSeek Harness (dsh) locally with one-click install and zero configuration.",
+    "publisher": "Sabishii.dev"
+  },
+  "mainBinaryName": "dsh-desktop"
 }

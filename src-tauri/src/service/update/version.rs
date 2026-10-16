@@ -11,7 +11,7 @@ pub(super) fn current_version() -> String {
 }
 
 pub(super) fn supports_stable_updates(identifier: &str) -> bool {
-    identifier != "dsh-tauri-nightly"
+    identifier != "dsh-tauri-nightly" && identifier != "dev.sabishii.dshdesktop.nightly"
 }
 
 /// 解析版本号为 semver（容忍 `v` 前缀）；非合法 semver 返回 `None`。
@@ -192,11 +192,12 @@ mod tests {
     #[test]
     fn nightly_does_not_receive_stable_installers() {
         assert!(!supports_stable_updates("dsh-tauri-nightly"));
+        assert!(!supports_stable_updates("dev.sabishii.dshdesktop.nightly"));
     }
 
     #[test]
     fn stable_and_legacy_identifiers_keep_stable_updates() {
-        for identifier in ["dsh-tauri", "io.github.hairyf.deepseek-harness-desktop"] {
+        for identifier in ["dsh-tauri", "io.github.hairyf.deepseek-harness-desktop", "dev.sabishii.dshdesktop"] {
             assert!(supports_stable_updates(identifier));
         }
     }
