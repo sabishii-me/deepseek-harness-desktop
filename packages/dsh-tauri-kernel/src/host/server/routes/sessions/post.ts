@@ -19,7 +19,10 @@ export default defineEventHandler<EventHandlerRequest, Promise<{ sessionId: stri
   }
   catch (error) {
     const message = error instanceof Error ? error.message : ''
-    if (!message.startsWith('BRIDGE_'))
+    // `message` is typed as string, but a thrown value can still carry an
+    // undefined `message` at runtime, which previously crashed the guard below
+    // with a bare TypeError instead of reporting the bridge reason.
+    if (typeof message !== 'string' || !message.startsWith('BRIDGE_'))
       throw error
     throw new HTTPError({ statusCode: 400, message })
   }

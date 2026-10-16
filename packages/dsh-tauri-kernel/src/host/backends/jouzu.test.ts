@@ -158,3 +158,35 @@ describe('jouzu native kernel', () => {
     expect(catalog.models).toEqual([{ id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro' }])
   })
 })
+
+/**
+ * Resume goes through the CLI (`jouzu --session <id> --mode rpc`), not an RPC
+ * command. An earlier attempt issued `switch_session`, whose parameter is
+ * `sessionPath` rather than `sessionId`; passing the id made Jouzu dereference
+ * undefined internally and reject every turn with a bare TypeError.
+ */
+describe('jouzu resume', () => {
+  it('resumes through the CLI session flag', async () => {
+    const { fixture, sessionId } = jouzuProcess()
+    vi.mocked(spawn).mockReturnValue(fixture.child)
+    const session = await createJouzuSession(command, 'C:/fixture', sessionId, createSink(), new AbortController().signal)
+    sessions.push(session)
+    expect(vi.mocked(spawn).mock.calls[0]![1]).toEqual(['C:/fixture/jouzu/dist/cli.js', '--session', sessionId, '--mode', 'rpc'])
+    expect(session.id).toBe(sessionId)
+  })
+
+  it('reports a mismatch when Jouzu attaches to another session', async () => {
+    const { fixture } = jouzuProcess()
+    vi.mocked(spawn).mockReturnValue(fixture.child)
+    await expect(createJouzuSession(command, 'C:/fixture', 'a-different-session', createSink(), new AbortController().signal))
+      .rejects.toMatchObject({ code: 'BRIDGE_RESUME_MISMATCH' })
+  })
+
+  it('never issues an RPC switch_session command', async () => {
+    const { fixture, sessionId } = jouzuProcess()
+    vi.mocked(spawn).mockReturnValue(fixture.child)
+    const session = await createJouzuSession(command, 'C:/fixture', sessionId, createSink(), new AbortController().signal)
+    sessions.push(session)
+    expect(fixture.frames.some(frame => frame.type === 'switch_session')).toBe(false)
+  })
+})

@@ -70,7 +70,14 @@ class JouzuSession implements NativeSession {
   private applied: NativeTurnOptions = { model: null, reasoningEffort: null }
 
   constructor(command: NativeCommand, cwd: string, private readonly sink: NativeSink, private readonly storedId: string | null) {
-    this.transport = new JsonLinesProcess({ ...command, env: { ...(command.env ?? nativeEnvironment()) } }, ['--mode', 'rpc'], cwd)
+    // A stored binding is resumed through the CLI, the same way Codex and
+    // Claude resume theirs; Jouzu's `--session <id>` selects the session to
+    // reopen before the RPC surface is attached.
+    this.transport = new JsonLinesProcess(
+      { ...command, env: { ...(command.env ?? nativeEnvironment()) } },
+      storedId === null ? ['--mode', 'rpc'] : ['--session', storedId, '--mode', 'rpc'],
+      cwd,
+    )
     this.requests = new PendingRequests(value => this.transport.write(value))
     this.transport.onFailure((error) => {
       this.failure = error
@@ -86,14 +93,8 @@ class JouzuSession implements NativeSession {
 
   async open(signal: AbortSignal): Promise<void> {
     signal.throwIfAborted()
-    // A stored binding is resumed explicitly; a fresh session adopts the
-    // identity Jouzu reports for the session it started.
-    if (this.storedId !== null) {
-      const resumed = await this.send('switch_session', { sessionId: this.storedId }, signal)
-      const switched = identityOf(resumed ?? {})
-      if (switched !== undefined && switched !== this.storedId)
-        throw new NativeBridgeError('BRIDGE_RESUME_MISMATCH', 'Jouzu switched to a different session identity')
-    }
+    // Resuming happens through the CLI launch; `open` only confirms that the
+    // session Jouzu actually attached to is the one that was requested.
     const state = await this.send('get_state', {}, signal)
     const id = identityOf(state ?? {})
     if (id === undefined)
@@ -109,13 +110,23 @@ class JouzuSession implements NativeSession {
     const data = await this.send('get_available_models', {}, signal)
     const models: NativeModelCatalog = { models: [] }
     const list = Array.isArray(data?.models) ? data.models : []
+    const seen = new Set<string>()
     for (const entry of list) {
       const model = record(entry)
       const id = typeof model.id === 'string' ? model.id : undefined
       if (id === undefined)
         continue
+      const provider = typeof model.provider === 'string' ? model.provider : undefined
+      // Jouzu serves the same model id through several providers, while the
+      // official catalog requires unique ids. Jouzu's own `--model` selector
+      // accepts `provider/id`, so the provider-qualified form is both unique
+      // and directly usable when the model is handed back.
+      const qualified = provider === undefined ? id : `${provider}/${id}`
+      if (seen.has(qualified))
+        continue
+      seen.add(qualified)
       models.models.push({
-        id,
+        id: qualified,
         name: typeof model.name === 'string' && model.name !== '' ? model.name : id,
         ...typeof model.description === 'string' ? { description: model.description } : {},
       })
@@ -135,7 +146,12 @@ class JouzuSession implements NativeSession {
       throw new NativeBridgeError('BRIDGE_EMPTY_INPUT', 'Jouzu native turn requires a user message')
     const text = runs.map(run => run.map(part => part.type === 'text' ? part.text : '[image]').join('')).join('\n')
     if (options?.model !== null && options?.model !== undefined && options.model !== this.applied.model) {
-      await this.send('set_model', { model: options.model }, signal)
+      // Jouzu addresses a model by the pair (`provider`, `modelId`); the
+      // catalog exposes exactly that pair joined as `provider/id`.
+      const separator = options.model.indexOf('/')
+      if (separator <= 0 || separator === options.model.length - 1)
+        throw new NativeBridgeError('BRIDGE_MODEL_UNAVAILABLE', 'Jouzu models must be selected as `provider/id`.')
+      await this.send('set_model', { provider: options.model.slice(0, separator), modelId: options.model.slice(separator + 1) }, signal)
       this.applied = { ...this.applied, model: options.model }
     }
     if (options?.reasoningEffort !== null && options?.reasoningEffort !== undefined && options.reasoningEffort !== this.applied.reasoningEffort) {
