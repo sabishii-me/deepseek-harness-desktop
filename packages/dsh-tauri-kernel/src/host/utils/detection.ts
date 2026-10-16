@@ -78,7 +78,7 @@ export async function resolveNativeCommand(backend: 'codex' | 'claude' | 'jouzu'
     if (!match)
       throw new Error('BRIDGE_SHIM_UNSUPPORTED: 此命令包装器无法安全解析，请配置原生可执行文件路径。')
     entry = join(dirname(entry), match[0].replace(/[\\/]/g, '/'))
-    packageRoot = backend === 'jouzu' ? dirname(dirname(dirname(entry))) : backend === 'claude' && /\.js$/i.test(entry) ? dirname(entry) : dirname(dirname(entry))
+    packageRoot = backend === 'jouzu' ? dirname(dirname(entry)) : backend === 'claude' && /\.js$/i.test(entry) ? dirname(entry) : dirname(dirname(entry))
   }
   entry = await realpath(entry)
   const script = /\.[cm]?js$/i.test(entry)
@@ -118,8 +118,10 @@ export async function detectBackend(backend: 'codex' | 'claude' | 'jouzu', overr
     detection.version = /\b\d+\.\d+\.\d+(?:[-+][\w.-]+)?\b/.exec(version.output)?.[0] ?? null
     if (!detection.version)
       throw new Error('BRIDGE_VERSION_UNRECOGNIZED: CLI 未返回可识别版本。')
-    const help = await probe(command, backend === 'codex' ? ['app-server', '--help'] : ['--help'], timeout)
-    if (help.code !== 0 || (backend === 'claude' && !/stream-json/.test(help.output)) || (backend === 'jouzu' && !/--mode/.test(help.output))) {
+    // Jouzu wraps Pi: the output-mode flag that selects RPC lives on the Pi
+    // argument surface, so the protocol probe asks `pi --help`.
+    const help = await probe(command, backend === 'codex' ? ['app-server', '--help'] : backend === 'jouzu' ? ['pi', '--help'] : ['--help'], timeout)
+    if (help.code !== 0 || (backend === 'claude' && !/stream-json/.test(help.output)) || (backend === 'jouzu' && !/--mode\s+<mode>[^\n]*rpc/.test(help.output))) {
       detection.drift = true
       throw new Error('BRIDGE_PROTOCOL_UNAVAILABLE: 本机 CLI 不支持所需桥接协议，请更新 CLI。')
     }
@@ -141,11 +143,15 @@ export async function detectBackend(backend: 'codex' | 'claude' | 'jouzu', overr
         catch {}
       }
     }
-    detection.hint = detection.auth === 'missing'
-      ? '请先在终端运行 claude auth login。'
-      : detection.auth === 'unknown'
-        ? backend === 'codex' ? '无法确认 Codex 认证状态；请检查原生 CLI 的 provider 配置和认证方式。' : '无法确认登录状态；原生 CLI 会在连接时检查认证。'
-        : null
+    // Jouzu manages its own model credentials, so it has no CLI auth probe and
+    // no missing/ok verdict to report; its hint stays empty.
+    detection.hint = backend === 'jouzu'
+      ? null
+      : detection.auth === 'missing'
+        ? '请先在终端运行 claude auth login。'
+        : detection.auth === 'unknown'
+          ? backend === 'codex' ? '无法确认 Codex 认证状态；请检查原生 CLI 的 provider 配置和认证方式。' : '无法确认登录状态；原生 CLI 会在连接时检查认证。'
+          : null
     return { detection, command }
   }
   catch (error) {
