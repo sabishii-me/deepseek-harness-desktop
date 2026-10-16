@@ -82,6 +82,7 @@ class JouzuSession implements NativeSession {
   private disposePromise?: Promise<void>
   private nativeId = ''
   private catalog?: NativeModelCatalog
+  private baselineModel?: string
   private applied: NativeTurnOptions = { model: null, reasoningEffort: null }
 
   constructor(command: NativeCommand, cwd: string, private readonly sink: NativeSink, private readonly storedId: string | null) {
@@ -117,6 +118,14 @@ class JouzuSession implements NativeSession {
     if (this.storedId !== null && id !== this.storedId)
       throw new NativeBridgeError('BRIDGE_RESUME_MISMATCH', 'Jouzu resumed a different session identity')
     this.nativeId = id
+    const model = state?.model
+    if (model !== null && typeof model === 'object') {
+      const selected = model as Record<string, unknown>
+      if (typeof selected.provider === 'string' && typeof selected.id === 'string') {
+        this.baselineModel = `${selected.provider}/${selected.id}`
+        this.applied.model = this.baselineModel
+      }
+    }
   }
 
   async models(signal: AbortSignal): Promise<NativeModelCatalog> {
@@ -146,6 +155,8 @@ class JouzuSession implements NativeSession {
         ...typeof model.description === 'string' ? { description: model.description } : {},
       })
     }
+    if (this.baselineModel !== undefined && seen.has(this.baselineModel))
+      models.defaultModel = this.baselineModel
     this.catalog = models
     return models
   }
@@ -160,14 +171,15 @@ class JouzuSession implements NativeSession {
     if (runs.length === 0)
       throw new NativeBridgeError('BRIDGE_EMPTY_INPUT', 'Jouzu native turn requires a user message')
     const text = runs.map(run => run.map(part => part.type === 'text' ? part.text : '[image]').join('')).join('\n')
-    if (options?.model !== null && options?.model !== undefined && options.model !== this.applied.model) {
+    const selectedModel = options === undefined ? undefined : options.model ?? this.baselineModel
+    if (selectedModel !== undefined && selectedModel !== this.applied.model) {
       // Jouzu addresses a model by the pair (`provider`, `modelId`); the
       // catalog exposes exactly that pair joined as `provider/id`.
-      const separator = options.model.indexOf('/')
-      if (separator <= 0 || separator === options.model.length - 1)
+      const separator = selectedModel.indexOf('/')
+      if (separator <= 0 || separator === selectedModel.length - 1)
         throw new NativeBridgeError('BRIDGE_MODEL_UNAVAILABLE', 'Jouzu models must be selected as `provider/id`.')
-      await this.send('set_model', { provider: options.model.slice(0, separator), modelId: options.model.slice(separator + 1) }, signal)
-      this.applied = { ...this.applied, model: options.model }
+      await this.send('set_model', { provider: selectedModel.slice(0, separator), modelId: selectedModel.slice(separator + 1) }, signal)
+      this.applied = { ...this.applied, model: selectedModel }
     }
     if (options?.reasoningEffort !== null && options?.reasoningEffort !== undefined && options.reasoningEffort !== this.applied.reasoningEffort) {
       await this.send('set_thinking_level', { level: options.reasoningEffort }, signal)

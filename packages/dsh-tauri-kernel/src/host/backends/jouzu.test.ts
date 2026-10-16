@@ -236,3 +236,36 @@ describe('jouzu cancellation', () => {
     }
   })
 })
+
+describe('jouzu model picker', () => {
+  it('lists provider-qualified models and restores the actual default after switching', async () => {
+    const available = [
+      { provider: 'native', id: 'same-id', name: 'Native model' },
+      { provider: 'shisa', id: 'same-id', name: 'Shisa model' },
+    ]
+    const fixture = new ProcessFixture((frame) => {
+      if (frame.type === 'get_state')
+        fixture.send({ id: frame.id, type: 'response', success: true, data: { sessionId: 'picker', model: available[0] } })
+      if (frame.type === 'get_available_models')
+        fixture.send({ id: frame.id, type: 'response', success: true, data: { models: available } })
+      if (frame.type === 'set_model' || frame.type === 'prompt') {
+        fixture.send({ id: frame.id, type: 'response', success: true })
+        if (frame.type === 'prompt')
+          fixture.send({ type: 'agent_settled' })
+      }
+    })
+    vi.mocked(spawn).mockReturnValue(fixture.child)
+    const signal = new AbortController().signal
+    const session = await createJouzuSession(command, 'C:/fixture', null, createSink(), signal)
+    sessions.push(session)
+    const catalog = await session.models!(signal)
+    expect(catalog.defaultModel).toBe('native/same-id')
+    expect(catalog.models.map(model => model.id)).toEqual(['native/same-id', 'shisa/same-id'])
+    await session.submit([userMessage('first')], signal, { model: 'shisa/same-id', reasoningEffort: null })
+    await session.submit([userMessage('second')], signal, { model: null, reasoningEffort: null })
+    expect(fixture.frames.filter(frame => frame.type === 'set_model')).toEqual([
+      expect.objectContaining({ provider: 'shisa', modelId: 'same-id' }),
+      expect.objectContaining({ provider: 'native', modelId: 'same-id' }),
+    ])
+  })
+})
