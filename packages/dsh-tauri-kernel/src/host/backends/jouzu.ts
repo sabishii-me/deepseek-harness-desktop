@@ -47,6 +47,9 @@ interface JouzuRun {
   segment: number
   /** Whether the current segment has already carried content. */
   usedSegment: boolean
+  finalText: boolean
+  finalThinking: boolean
+  readonly confirmed: Set<string>
   /** Tool-call argument fragments keyed by lane. */
   readonly fragments: Map<string, string>
   /** Tool calls announced by the assistant and awaiting their execution events. */
@@ -203,6 +206,9 @@ class JouzuSession implements NativeSession {
       signal,
       segment: 0,
       usedSegment: false,
+      finalText: false,
+      finalThinking: false,
+      confirmed: new Set(),
       fragments: new Map(),
       announced: new Set(),
       presented: new Map(),
@@ -308,6 +314,23 @@ class JouzuSession implements NativeSession {
    * own widgets and internal bookkeeping are dropped rather than invented.
    */
   private project(run: JouzuRun, type: string | undefined, message: Record<string, unknown>): void {
+    if (type === 'message_end') {
+      const completed = record(message.message ?? {})
+      if (completed.role !== 'assistant' || !Array.isArray(completed.content))
+        return
+      // Final messages are authoritative even when the provider emits no
+      // incremental *_end event. Confirm each block at most once.
+      completed.content.forEach((value, contentIndex) => {
+        const block = record(value)
+        if (block.type === 'text' && typeof block.text === 'string')
+          this.projectDelta(run, { type: 'text_end', contentIndex, content: block.text })
+        else if (block.type === 'thinking' && typeof block.thinking === 'string')
+          this.projectDelta(run, { type: 'thinking_end', contentIndex, content: block.thinking })
+        else if (block.type === 'toolCall')
+          this.projectDelta(run, { type: 'toolcall_end', contentIndex, toolCall: block })
+      })
+      return
+    }
     if (type === 'message_update') {
       this.projectDelta(run, record(message.assistantMessageEvent ?? {}))
       return
@@ -352,11 +375,19 @@ class JouzuSession implements NativeSession {
       if (run.usedSegment)
         run.segment++
       run.usedSegment = true
+      run.finalText = false
+      run.finalThinking = false
       return
     }
     if (type === 'agent_settled') {
       if (run.settled)
         return
+      if (!run.finalText && run.finalThinking) {
+        this.sink.assistant(`jouzu:${run.segment}:bridge-notice`, [{
+          type: 'text',
+          text: '[Jouzu 内核桥接提示] 本轮模型只返回了思考内容，没有最终回答正文。工具结果仍保留在上方；思考内容没有被转换成回答。',
+        }])
+      }
       run.settled = true
       run.result.resolve()
     }
@@ -366,6 +397,8 @@ class JouzuSession implements NativeSession {
     const kind = typeof event.type === 'string' ? event.type : undefined
     const index = typeof event.contentIndex === 'number' ? event.contentIndex : 0
     const lane = `jouzu:${run.segment}:${index}`
+    if ((kind === 'text_end' || kind === 'thinking_end' || kind === 'toolcall_end') && run.confirmed.has(lane))
+      return
     switch (kind) {
       case 'text_delta': {
         if (typeof event.delta === 'string' && event.delta !== '')
@@ -381,11 +414,15 @@ class JouzuSession implements NativeSession {
         // A stream is only settled once its final content is acknowledged;
         // deltas alone leave the official sink waiting forever.
         const text = typeof event.content === 'string' ? event.content : ''
+        run.finalText ||= text.trim().length > 0
+        run.confirmed.add(lane)
         this.sink.assistant(lane, [{ type: 'text', text }])
         return
       }
       case 'thinking_end': {
         const text = typeof event.content === 'string' ? event.content : ''
+        run.finalThinking ||= text.trim().length > 0
+        run.confirmed.add(lane)
         this.sink.assistant(lane, [{ type: 'thinking', text }])
         return
       }
@@ -409,6 +446,7 @@ class JouzuSession implements NativeSession {
         // Arguments arrive either as a complete object on `toolCall` or as the
         // JSON fragments accumulated above; prefer the object when present.
         const arguments_ = call.arguments === undefined ? fragments || '{}' : compact(call.arguments)
+        run.confirmed.add(lane)
         run.presented.set(id, arguments_)
         run.pendingCalls.push({ lane, content: { type: 'tool-call', id, name, arguments: arguments_ } })
         return

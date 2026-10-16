@@ -201,3 +201,36 @@ describe('jouzu lane identity', () => {
     expect(lanes).toContain('jouzu:1:0')
   })
 })
+
+describe('Jouzu final message reconciliation', () => {
+  it.each([false, true])('confirms a final message with or without end deltas (incremental=%s)', async (incremental) => {
+    const fixture = jouzuProcess()
+    const sink = createSink()
+    vi.mocked(spawn).mockReturnValue(fixture.child)
+    const session = await createJouzuSession(command, 'C:/fixture', null, sink, new AbortController().signal)
+    sessions.push(session)
+    const turn = session.submit([userMessage('hello')], new AbortController().signal)
+    fixture.send({ type: 'turn_start' })
+    if (incremental)
+      fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'text_end', contentIndex: 0, content: 'hello' } })
+    fixture.send({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] } })
+    fixture.send({ type: 'agent_settled' })
+    await turn
+    expect(sink.assistant).toHaveBeenCalledExactlyOnceWith('jouzu:0:0', [{ type: 'text', text: 'hello' }])
+  })
+
+  it('labels a reasoning-only completion instead of promoting reasoning into an answer', async () => {
+    const fixture = jouzuProcess()
+    const sink = createSink()
+    vi.mocked(spawn).mockReturnValue(fixture.child)
+    const session = await createJouzuSession(command, 'C:/fixture', null, sink, new AbortController().signal)
+    sessions.push(session)
+    const turn = session.submit([userMessage('status')], new AbortController().signal)
+    fixture.send({ type: 'turn_start' })
+    fixture.send({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'private analysis' }] } })
+    fixture.send({ type: 'agent_settled' })
+    await turn
+    expect(sink.assistant.mock.calls[0]![1]).toEqual([{ type: 'thinking', text: 'private analysis' }])
+    expect(sink.assistant.mock.calls[1]![1]).toEqual([{ type: 'text', text: expect.stringContaining('[Jouzu 内核桥接提示]') }])
+  })
+})
