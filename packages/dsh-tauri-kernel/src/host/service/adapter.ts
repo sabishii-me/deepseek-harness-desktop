@@ -1,10 +1,12 @@
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { GenerateOptions, LlmAdapter, LlmCallConfig, LlmModelInfo, LlmResolvedModelInfo, ResolvedRetryPolicy, StreamChunk, UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import type { NativeBackend } from '../../shared/types'
 import type { AdmittedStep, HostContext } from '../types'
 import { Buffer } from 'node:buffer'
 import { getServerContext } from 'dsh-h3/utils'
 import { defineService } from 'dsh-tauri'
+import { KERNEL_LABELS, NATIVE_BACKENDS } from '../../shared/types'
 import { BRIDGE_PROVIDER, SESSION_TITLE_PURPOSE } from '../config/constants'
 import { runtime } from '../config/runtime'
 import { server } from '../server'
@@ -43,9 +45,9 @@ export const adapter = defineService({
 
       async resolveModel(provider: string, model: string, signal?: AbortSignal): Promise<LlmResolvedModelInfo> {
         signal?.throwIfAborted()
-        if (provider !== BRIDGE_PROVIDER || (model !== 'codex' && model !== 'claude'))
+        if (provider !== BRIDGE_PROVIDER || !NATIVE_BACKENDS.includes(model as NativeBackend))
           throw new Error('BRIDGE_ROUTE_INVALID: 原生内核路由无效。')
-        return { provider, id: model, name: model === 'codex' ? 'Codex' : 'Claude' }
+        return { provider, id: model, name: KERNEL_LABELS[model as NativeBackend] }
       }
 
       stream(options: GenerateOptions): AsyncIterable<StreamChunk> {

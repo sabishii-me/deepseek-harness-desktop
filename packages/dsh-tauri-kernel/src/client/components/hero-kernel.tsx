@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react'
 import type { BackendDetection, BackendId } from '../../shared/types'
+import { isNativeBackend, KERNEL_LABELS, NATIVE_BACKENDS } from '../../shared/types'
 import type { HeroKernelProps } from './slot-contract'
 import { ChevronDown, Chip, Menu, Xmark } from 'dsh-tauri-ui/client'
 import { If, useAsyncState, useStore, useWatchImmediate } from 'dsh-tauri/client'
@@ -10,8 +11,9 @@ import { kernelContentAvailable } from '../service/kernel-version'
 import { kernelStore } from '../store/modules/kernel-store'
 import { KernelIcon } from './kernel-icon'
 
-const LABELS: Record<BackendId, string> = { dsh: 'DeepSeek Harness', codex: 'Codex', claude: 'Claude', jouzu: 'Jouzu' }
-const CHOICES = ['codex', 'claude', 'jouzu'] as const
+/** Official kernel plus every native kernel, in picker order. */
+const LABELS: Record<BackendId, string> = { dsh: 'DeepSeek Harness', ...KERNEL_LABELS }
+const CHOICES = NATIVE_BACKENDS
 
 function backendHint(backend: BackendDetection | undefined): string | undefined {
   if (backend === undefined || !backend.installed)
@@ -54,7 +56,7 @@ export function HeroKernel(props: HeroKernelProps): ReactElement | null {
 
   const awaiting = props.sessionId !== undefined && identity === undefined
   const bound = backendFromIdentity(identity)
-  const backend = bound === 'codex' || bound === 'claude' ? bound : undefined
+  const backend = isNativeBackend(bound) ? bound : undefined
   const roster = new Map(store.backends.map(item => [item.id, item]))
   const workspaceBySession = new Map(workspaces.flatMap(workspace => workspace.sessionIds.map(id => [id, workspace.workspaceId] as const)))
   const workspaceId = props.sessionId === undefined ? undefined : workspaceBySession.get(props.sessionId)
@@ -86,12 +88,12 @@ export function HeroKernel(props: HeroKernelProps): ReactElement | null {
     ? locale.text('kernel.fork')
     : [
         locale.text('kernel.selectorScope'),
-        backend === 'codex' || backend === 'claude' ? locale.text('kernel.immutable') : undefined,
+        backend !== undefined ? locale.text('kernel.immutable') : undefined,
       ].filter(Boolean).join(' · ')
   const failure = error == null ? store.error : error instanceof Error ? error.message : String(error)
 
   function select(id: string): void {
-    if (isLoading || store.phase !== 'ready' || !capable || (id !== 'codex' && id !== 'claude') || !isBackendAvailable(roster.get(id)))
+    if (isLoading || store.phase !== 'ready' || !capable || !isNativeBackend(id) || !isBackendAvailable(roster.get(id)))
       return
     const preset = summary?.projectionValues?.agentPreset
     void executeImmediate(id, workspaceId === undefined

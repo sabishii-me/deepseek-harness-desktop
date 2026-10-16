@@ -1,6 +1,7 @@
 import type { ModelCatalogModel, ModelSelection } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { NativeModelDirectory, NativeTurnOptions } from '../../shared/native-model'
-import type { KernelBinding } from '../../shared/types'
+import type { KernelBinding, NativeBackend } from '../../shared/types'
+import { KERNEL_LABELS } from '../../shared/types'
 import type { NativeModelDirectoryState } from '../types/kernel-model'
 import { groupBy, uniqBy } from 'dsh-tauri/client'
 import { NATIVE_DEFAULT_MODEL } from '../constants'
@@ -35,7 +36,7 @@ export function nativeModelDirectory(
     current: selection,
     ...(reasoningEffort === undefined ? {} : { retainedEffort: reasoningEffort }),
     routable: catalog === null ? null : models.some(model => model.id === selection.model),
-    groups: [{ id: provider, name: backend === 'codex' ? 'Codex' : 'Claude', models }],
+    groups: [{ id: provider, name: KERNEL_LABELS[backend as NativeBackend], models }],
     failures: [],
     status: previous?.status ?? 'idle',
     pending: previous?.pending ?? null,

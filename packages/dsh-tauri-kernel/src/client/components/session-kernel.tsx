@@ -2,6 +2,8 @@ import type { ReactElement } from 'react'
 import type { SessionKernelProps } from './slot-contract'
 import { If, useStore, useWatchImmediate } from 'dsh-tauri/client'
 import { locale } from '../locales'
+import type { NativeBackend } from '../../shared/types'
+import { KERNEL_LABELS, NATIVE_BACKENDS } from '../../shared/types'
 import { backendFromIdentity, kernelFromList } from '../service/kernel-identity'
 import { kernelContentAvailable } from '../service/kernel-version'
 import { kernelStore } from '../store/modules/kernel-store'
@@ -18,10 +20,10 @@ export function SessionKernel(props: SessionKernelProps): ReactElement | null {
   if (store.phase === 'ready' && !kernelContentAvailable(store.backends))
     return null
   const backend = backendFromIdentity(identity)
-  const label = backend === 'codex' ? 'Codex' : 'Claude'
+  const label = NATIVE_BACKENDS.includes(backend as NativeBackend) ? KERNEL_LABELS[backend as NativeBackend] : ''
   return (
     <If
-      cond={backend === 'codex' || backend === 'claude'}
+      cond={NATIVE_BACKENDS.includes(backend as NativeBackend)}
       then={(
         <span className="inline-flex shrink-0 text-tertiary" role="img" aria-label={`${label} ${locale.text('kernel.label')}`} title={label} data-bridge-kernel={backend}>
           <KernelIcon backend={backend} />
