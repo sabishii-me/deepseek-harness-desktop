@@ -469,28 +469,44 @@ pub(crate) fn user_home_dir() -> Option<PathBuf> {
     std::env::var_os(key).map(PathBuf::from)
 }
 
-/// Harness 用户数据目录（$DSH_HOME）。
-///
-/// 与官方 dsh（`${DSH_HOME:-$HOME/.dsh}`）保持一致：
-/// - release 构建使用非空环境变量 `DSH_HOME`，否则默认 `~/.dsh`；
-/// - debug 构建始终使用 `~/.dsh.dev`，忽略从旧 desktop checkout、终端或 release
-///   shim 继承的 `DSH_HOME`，避免两个构建误用同一 profile 并发改写；
-/// - debug 子进程由 launch 显式收到同一个 `~/.dsh.dev`，开发版与生产版的会话、档案、
-///   插件与主题因此互不干扰。
+/// Fork-owned Windows setting shared by installer and desktop, not HKCU\Environment.
+#[cfg(windows)]
+pub const DESKTOP_DATA_KEY: &str = r"Software\Sabishii.dev\DSH-Desktop";
+
+pub fn default_desktop_data_path() -> PathBuf {
+    #[cfg(windows)]
+    {
+        return std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+            .or_else(|| user_home_dir().map(|p| p.join("AppData/Local")))
+            .expect("Cannot resolve user data directory")
+            .join("Sabishii.dev/DSH-Desktop/data");
+    }
+    #[cfg(not(windows))]
+    user_home_dir().expect("Cannot resolve user home").join(".local/share/Sabishii.dev/DSH-Desktop/data")
+}
+
+/// The installer and both build modes use the same app-owned data selection.
+/// DSH_HOME is supplied only to the spawned DSH process by workflow::launch.
 pub fn get_dsh_data_path<R: Runtime>(_app_handle: &AppHandle<R>) -> PathBuf {
-    let dir_name = if cfg!(debug_assertions) {
-        DSH_HOME_DEV_DIR_NAME
-    } else {
-        if let Some(home) = std::env::var_os("DSH_HOME") {
-            if !home.is_empty() {
-                return PathBuf::from(home);
+    #[cfg(windows)]
+    {
+        use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+        if let Ok(key) = RegKey::predef(HKEY_CURRENT_USER).open_subkey(DESKTOP_DATA_KEY) {
+            if let Ok(value) = key.get_value::<String, _>("DataDir") {
+                if !value.trim().is_empty() && Path::new(&value).is_absolute() {
+                    return PathBuf::from(value);
+                }
             }
         }
-        DSH_HOME_DIR_NAME
-    };
-    user_home_dir()
-        .map(|home| home.join(dir_name))
-        .unwrap_or_else(|| PathBuf::from(dir_name))
+        return default_desktop_data_path();
+    }
+    #[cfg(not(windows))]
+    {
+        if let Some(value) = std::env::var_os("SABISHII_DESKTOP_DATA_DIR") {
+            if !value.is_empty() { return PathBuf::from(value); }
+        }
+        default_desktop_data_path()
+    }
 }
 
 /// dsh 服务日志文件路径

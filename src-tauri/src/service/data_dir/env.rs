@@ -12,30 +12,33 @@
 
 use std::path::PathBuf;
 
-use crate::config::{DSH_HOME_DEV_DIR_NAME, DSH_HOME_DIR_NAME};
+
 
 /// 数据目录环境变量名（官方 dsh、桌面端与 CLI shim 共用同一个值）
-pub(super) const DATA_DIR_ENV: &str = "DSH_HOME";
+pub(super) const DATA_DIR_ENV: &str = "SABISHII_DESKTOP_DATA_DIR";
 
 /// 未设置 `DSH_HOME` 时的默认数据目录（release `~/.dsh`，debug `~/.dsh.dev`）。
 ///
 /// 必须与 `config::get_dsh_data_path` 的默认分支逐字一致：回滚时靠它判断
 /// 「原位置就是默认目录」并据此决定是清空环境变量还是写回一个具体路径。
 pub(super) fn default_home() -> PathBuf {
-    let name = if cfg!(debug_assertions) {
-        DSH_HOME_DEV_DIR_NAME
-    } else {
-        DSH_HOME_DIR_NAME
-    };
-    crate::config::user_home_dir()
-        .map(|home| home.join(name))
-        .unwrap_or_else(|| PathBuf::from(name))
+    crate::config::default_desktop_data_path()
 }
 
 /// 读取用户级 `DSH_HOME`（空白值视为未设置：注册表里可能留着空字符串）。
 #[cfg(windows)]
 pub(super) fn read_user_home() -> Result<Option<String>, String> {
-    Ok(normalize(crate::service::cli::read_user_env(DATA_DIR_ENV)?))
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+    let key = match RegKey::predef(HKEY_CURRENT_USER).open_subkey(crate::config::DESKTOP_DATA_KEY) {
+        Ok(key) => key,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    match key.get_value::<String, _>("DataDir") {
+        Ok(value) => Ok(normalize(Some(value))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 /// Unix：值可能来自进程环境、~/.profile 的标记块或平台自己的会话文件
@@ -51,8 +54,9 @@ pub(super) fn read_user_home() -> Result<Option<String>, String> {
 /// 必须重开终端（面板文案里要写明这一点）。
 #[cfg(windows)]
 pub(super) fn write_user_home(value: &str) -> Result<(), String> {
-    crate::service::cli::write_user_env(DATA_DIR_ENV, value)?;
-    crate::service::cli::notify_environment_change();
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+    let (key, _) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(crate::config::DESKTOP_DATA_KEY).map_err(|e| e.to_string())?;
+    key.set_value("DataDir", &value).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -69,8 +73,11 @@ pub(super) fn write_user_home(value: &str) -> Result<(), String> {
 /// 本来就会落到默认目录，写一条指向默认目录的值反而会掩盖用户后来的自定义设置。
 #[cfg(windows)]
 pub(super) fn clear_user_home() -> Result<(), String> {
-    crate::service::cli::delete_user_env(DATA_DIR_ENV)?;
-    crate::service::cli::notify_environment_change();
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+    let (key, _) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(crate::config::DESKTOP_DATA_KEY).map_err(|e| e.to_string())?;
+    if let Err(error) = key.delete_value("DataDir") {
+        if error.kind() != std::io::ErrorKind::NotFound { return Err(error.to_string()); }
+    }
     Ok(())
 }
 
@@ -214,11 +221,7 @@ mod tests {
     #[test]
     fn default_home_matches_the_build_mode() {
         let home = default_home();
-        let expected = if cfg!(debug_assertions) {
-            DSH_HOME_DEV_DIR_NAME
-        } else {
-            DSH_HOME_DIR_NAME
-        };
+        let expected = "data";
         assert_eq!(home.file_name().unwrap().to_str().unwrap(), expected);
     }
 

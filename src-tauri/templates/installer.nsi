@@ -425,7 +425,7 @@ FunctionEnd
 ; 6. Data directory page (Deepseek Harness Desktop)
 ;
 ; Records where the Harness keeps its data (sessions, profiles, plugins) as
-; the user-level DSH_HOME variable. The in-app "Settings - Data directory"
+; an application-owned registry value (not global DSH_HOME). The in-app "Settings - Data directory"
 ; panel migrates an existing installation and can be used again at any time,
 ; so this page only has to cover a first install.
 Var DshDataDirNew
@@ -593,13 +593,13 @@ FunctionEnd
 !ifdef LANG_SIMPCHINESE
 LangString DshDataDirTitle ${LANG_SIMPCHINESE} "数据存放目录"
 LangString DshDataDirDesc ${LANG_SIMPCHINESE} "选择 Harness 会话、档案与插件数据的存放位置。安装后可在「设置 - 数据目录」中随时迁移。"
-LangString DshDataDirHint ${LANG_SIMPCHINESE} "默认位置是当前用户主目录下的 .dsh；安装完成后仍可随时修改。"
+LangString DshDataDirHint ${LANG_SIMPCHINESE} "默认独立存放在 LocalAppData\Sabishii.dev\DSH-Desktop\data，不修改全局 DSH_HOME。选择已有 .dsh 将共享其会话和插件。"
 LangString DshDataDirPick ${LANG_SIMPCHINESE} "浏览..."
 LangString DshDataDirInvalid ${LANG_SIMPCHINESE} "请填写绝对路径，例如 D:\DSHHome。"
 !endif
 LangString DshDataDirTitle ${LANG_ENGLISH} "Data directory"
 LangString DshDataDirDesc ${LANG_ENGLISH} "Choose where Harness keeps its sessions, profiles and plugins. You can move it later in Settings - Data directory."
-LangString DshDataDirHint ${LANG_ENGLISH} "The default location is .dsh in your user profile; you can change this at any time after installation."
+LangString DshDataDirHint ${LANG_ENGLISH} "Defaults to LocalAppData\Sabishii.dev\DSH-Desktop\data. Global DSH_HOME is unchanged. Selecting an existing .dsh shares its sessions and plugins."
 LangString DshDataDirPick ${LANG_ENGLISH} "Browse..."
 LangString DshDataDirInvalid ${LANG_ENGLISH} "Enter an absolute path, for example D:\DSHHome."
 
@@ -651,21 +651,11 @@ Function .onInit
     !insertmacro MULTIUSER_INIT
   !endif
 
-  ; Deepseek Harness Desktop: pre-fill the data directory page with the
-  ; location this installation would use today - the persisted user-level
-  ; override first, then whatever this process inherited, then the default
-  ; location. The persisted value wins on purpose: the environment this
-  ; installer inherited can be older than the last change, and clicking
-  ; straight through the page would then write that stale path back.
-  ReadRegStr $DshDataDirOriginal HKCU "Environment" "DSH_HOME"
-  ReadEnvStr $DshDataDirNew "DSH_HOME"
-  ${If} $DshDataDirOriginal == ""
-    StrCpy $DshDataDirOriginal "$DshDataDirNew"
-  ${Else}
-    StrCpy $DshDataDirNew "$DshDataDirOriginal"
-  ${EndIf}
+  ; App-owned selection; never inherit or modify the user's global DSH_HOME.
+  ReadRegStr $DshDataDirOriginal HKCU "Software\Sabishii.dev\DSH-Desktop" "DataDir"
+  StrCpy $DshDataDirNew "$DshDataDirOriginal"
   ${If} $DshDataDirNew == ""
-    StrCpy $DshDataDirNew "$PROFILE\.dsh"
+    StrCpy $DshDataDirNew "$LOCALAPPDATA\Sabishii.dev\DSH-Desktop\data"
   ${EndIf}
 FunctionEnd
 
@@ -876,27 +866,9 @@ Section Install
     Call CreateOrUpdateDesktopShortcut
   ${EndIf}
 
-  ; Deepseek Harness Desktop: persist the data directory picked on the
-  ; "Data directory" page as the user-level DSH_HOME variable. The app and
-  ; the CLI shims resolve their data directory from that variable, so it is
-  ; the single source of truth for where the Harness keeps its data. Silent,
-  ; passive and upgrade installs never reach the page, and therefore always
-  ; leave an existing value untouched.
+  ; Persist only our application setting. No environment broadcast or global override.
   ${If} $DshDataDirChanged = 1
-    ${StrCase} $R0 "$DshDataDirNew" "L"
-    ${StrCase} $R1 "$DshDataDirOriginal" "L"
-    ${If} $R0 != $R1
-      ${StrCase} $R1 "$PROFILE\.dsh" "L"
-      ${If} $R0 == $R1
-        ; The default location needs no variable: the app falls back to it.
-        DeleteRegValue HKCU "Environment" "DSH_HOME"
-      ${Else}
-        WriteRegStr HKCU "Environment" "DSH_HOME" "$DshDataDirNew"
-      ${EndIf}
-      ; Tell running processes (Explorer, open terminals) about the new
-      ; value; without this broadcast only newly launched ones would see it.
-      System::Call 'user32::SendMessageTimeoutW(p 0xFFFF, i ${WM_SETTINGCHANGE}, p 0, w "Environment", i 0x0002, i 5000, p 0)'
-    ${EndIf}
+    WriteRegStr HKCU "Software\Sabishii.dev\DSH-Desktop" "DataDir" "$DshDataDirNew"
   ${EndIf}
   !ifmacrodef NSIS_HOOK_POSTINSTALL
     !insertmacro NSIS_HOOK_POSTINSTALL
