@@ -22,7 +22,11 @@ export function nativeModelDirectory(
   const names = groupBy(directory, 'name')
   const models: ModelCatalogModel[] = directory.map(model => ({
     ...model,
-    name: names[model.name]!.length > 1 ? `${model.name} (${model.id})` : model.name,
+    // Jouzu model ids are provider-qualified; always show their origin, not
+    // only when two display names happen to collide. Search can match the id.
+    name: backend === 'jouzu' && model.id !== NATIVE_DEFAULT_MODEL
+      ? `${model.name} (${model.id})`
+      : names[model.name]!.length > 1 ? `${model.name} (${model.id})` : model.name,
     ...(model.reasoning === undefined ? {} : { reasoning: { efforts: model.reasoning.efforts } }),
   }))
   const reasoningEffort = current.reasoningEffort

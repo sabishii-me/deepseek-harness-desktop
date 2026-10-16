@@ -189,3 +189,19 @@ describe('native model directory view', () => {
       expect(isNativeTurnOptions(value)).toBe(false)
   })
 })
+
+
+it('shows the real provider-qualified identity for every Jouzu picker entry', () => {
+  const directory = nativeModelDirectory('jouzu', { model: null, reasoningEffort: null }, {
+    backend: 'jouzu', current: { model: null, reasoningEffort: null },
+    defaultModel: 'deepseek/deepseek-v4-pro',
+    models: [
+      { id: 'deepseek/deepseek-v4-pro', name: 'DeepSeek V4 Pro' },
+      { id: 'other/shisa-vision', name: 'DeepSeek Flash Vision' },
+    ],
+  })
+  expect(directory.groups[0]!.models.map(model => model.name)).toEqual([
+    'DeepSeek V4 Pro (deepseek/deepseek-v4-pro)',
+    'DeepSeek Flash Vision (other/shisa-vision)',
+  ])
+})

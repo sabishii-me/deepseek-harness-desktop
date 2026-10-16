@@ -1,3 +1,4 @@
+import type { JouzuModelAccess } from '../service/jouzu-model-access'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import type { NativeModelCatalog, NativeTurnOptions } from '../../shared/native-model'
 import type { NativeAttachments, NativeCommand, NativePermission, NativeContent, NativeSession, NativeSessionOpenOptions, NativeSink } from './types'
@@ -57,12 +58,12 @@ interface JouzuRun {
   failure?: Error
 }
 
-export async function createJouzuSession(command: NativeCommand, cwd: string, nativeSessionId: string | null, sink: NativeSink, signal: AbortSignal, options?: NativeSessionOpenOptions, _attachments?: NativeAttachments): Promise<NativeSession> {
+export async function createJouzuSession(command: NativeCommand, cwd: string, nativeSessionId: string | null, sink: NativeSink, signal: AbortSignal, options?: NativeSessionOpenOptions, _attachments?: NativeAttachments, modelAccess?: JouzuModelAccess): Promise<NativeSession> {
   if (options?.forkFrom !== undefined && (nativeSessionId !== null || options.forkFrom === ''))
     throw new NativeBridgeError('BRIDGE_FORK_INVALID', 'Jouzu fork requires a source session and no existing native binding')
   if (options?.forkFrom !== undefined)
     throw new NativeBridgeError('BRIDGE_FORK_UNSUPPORTED', 'Jouzu kernel fork is not implemented; the source session was not changed.')
-  const session = new JouzuSession(command, cwd, sink, nativeSessionId)
+  const session = new JouzuSession(modelAccess?.command ?? command, cwd, sink, nativeSessionId, modelAccess)
   try {
     await session.open(signal)
   }
@@ -85,7 +86,7 @@ class JouzuSession implements NativeSession {
   private baselineModel?: string
   private applied: NativeTurnOptions = { model: null, reasoningEffort: null }
 
-  constructor(command: NativeCommand, cwd: string, private readonly sink: NativeSink, private readonly storedId: string | null) {
+  constructor(command: NativeCommand, cwd: string, private readonly sink: NativeSink, private readonly storedId: string | null, private readonly modelAccess?: JouzuModelAccess) {
     // A stored binding is resumed through the CLI, the same way Codex and
     // Claude resume theirs; Jouzu's `--session <id>` selects the session to
     // reopen before the RPC surface is attached.
@@ -130,13 +131,15 @@ class JouzuSession implements NativeSession {
 
   async models(signal: AbortSignal): Promise<NativeModelCatalog> {
     if (this.catalog)
-      return this.catalog
+      return this.withHostedModels(this.catalog, signal)
     const data = await this.send('get_available_models', {}, signal)
     const models: NativeModelCatalog = { models: [] }
     const list = Array.isArray(data?.models) ? data.models : []
     const seen = new Set<string>()
     for (const entry of list) {
       const model = record(entry)
+      if (model.provider === 'dsh-bridge')
+        continue
       const id = typeof model.id === 'string' ? model.id : undefined
       if (id === undefined)
         continue
@@ -158,7 +161,14 @@ class JouzuSession implements NativeSession {
     if (this.baselineModel !== undefined && seen.has(this.baselineModel))
       models.defaultModel = this.baselineModel
     this.catalog = models
-    return models
+    return this.withHostedModels(models, signal)
+  }
+
+  private async withHostedModels(catalog: NativeModelCatalog, signal: AbortSignal): Promise<NativeModelCatalog> {
+    if (!this.modelAccess)
+      return catalog
+    const hosted = await this.modelAccess.catalog(signal)
+    return { ...catalog, models: [...catalog.models, ...hosted.models] }
   }
 
   async submit(messages: readonly UserMessage[], signal: AbortSignal, options?: NativeTurnOptions, _permission?: NativePermission): Promise<void> {
@@ -178,10 +188,13 @@ class JouzuSession implements NativeSession {
       const separator = selectedModel.indexOf('/')
       if (separator <= 0 || separator === selectedModel.length - 1)
         throw new NativeBridgeError('BRIDGE_MODEL_UNAVAILABLE', 'Jouzu models must be selected as `provider/id`.')
-      await this.send('set_model', { provider: selectedModel.slice(0, separator), modelId: selectedModel.slice(separator + 1) }, signal)
+      const hosted = await this.modelAccess?.select({ model: selectedModel, reasoningEffort: options?.reasoningEffort ?? null }, signal)
+      await this.send('set_model', hosted ? { provider: 'dsh-bridge', modelId: 'selected' } : { provider: selectedModel.slice(0, separator), modelId: selectedModel.slice(separator + 1) }, signal)
       this.applied = { ...this.applied, model: selectedModel }
     }
-    if (options?.reasoningEffort !== null && options?.reasoningEffort !== undefined && options.reasoningEffort !== this.applied.reasoningEffort) {
+    if (selectedModel?.startsWith('dsh/shisa/'))
+      await this.modelAccess?.select({ model: selectedModel, reasoningEffort: options?.reasoningEffort ?? null }, signal)
+    if (!selectedModel?.startsWith('dsh/shisa/') && options?.reasoningEffort !== null && options?.reasoningEffort !== undefined && options.reasoningEffort !== this.applied.reasoningEffort) {
       await this.send('set_thinking_level', { level: options.reasoningEffort }, signal)
       this.applied = { ...this.applied, reasoningEffort: options.reasoningEffort }
     }
@@ -239,6 +252,9 @@ class JouzuSession implements NativeSession {
       }
       catch (error) {
         throw errorFrom(error)
+      }
+      finally {
+        await this.modelAccess?.dispose()
       }
     })()
     return this.disposePromise

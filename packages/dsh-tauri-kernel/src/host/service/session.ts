@@ -1,3 +1,4 @@
+import { openJouzuModelAccess } from './jouzu-model-access'
 import type { Agent, AgentHandle, AgentSetupCommit } from '@deepseek-ai/dsh-agent'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
@@ -491,7 +492,11 @@ async function connect(agent: Agent, id: KernelBinding['backend'], storedId: str
   }
   const factory = id === 'codex' ? createCodexSession : id === 'claude' ? createClaudeSession : createJouzuSession
   const permission = permissionOf(agent.session)
-  const native = await factory(resolved.command, agent.session.header.cwd!, storedId, nativeSink, signal, permission === undefined ? options : { ...options, permission }, nativeAttachments(getServerContext<HostContext>(server)))
+  const ctx = getServerContext<HostContext>(server)
+  const modelAccess = id === 'jouzu' ? await openJouzuModelAccess(ctx, resolved.command) : undefined
+  const native = id === 'jouzu'
+    ? await createJouzuSession(resolved.command, agent.session.header.cwd!, storedId, nativeSink, signal, options, nativeAttachments(ctx), modelAccess)
+    : await factory(resolved.command, agent.session.header.cwd!, storedId, nativeSink, signal, permission === undefined ? options : { ...options, permission }, nativeAttachments(ctx))
   try {
     signal.throwIfAborted()
     if (!native.id || (storedId !== null && storedId !== native.id))
