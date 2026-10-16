@@ -1,3 +1,4 @@
+import { SetupJouzu } from './setup-jouzu'
 import type { IconComponent } from './loadable'
 import type { PluginProcess } from '@/store/modules/plugins'
 import type { PreinstallPlugin } from '@/store/modules/preinstall'
@@ -337,6 +338,8 @@ export function PreinstallSetup() {
           <Typography type="h4" className="!text-ink">{t('preinstall.title')}</Typography>
           <Typography color="muted" type="body-sm" className="max-w-[440px]">{t('preinstall.subtitle')}</Typography>
         </header>
+
+        <SetupJouzu />
 
         <If
           cond={installing}

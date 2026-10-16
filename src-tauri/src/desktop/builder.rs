@@ -1618,6 +1618,8 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
         crate::bridge::toggle_sidebar,
         crate::bridge::get_dsh_theme,
         crate::bridge::check_desktop_update,
+        crate::bridge::get_jouzu_installation,
+        crate::bridge::install_optional_jouzu,
         crate::bridge::download_desktop_update,
         crate::bridge::open_desktop_installer,
         crate::bridge::get_desktop_about,

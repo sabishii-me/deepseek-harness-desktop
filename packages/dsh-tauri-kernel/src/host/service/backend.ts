@@ -1,3 +1,4 @@
+import process from 'node:process'
 import type { BackendDetection } from '../../shared/types'
 import type { Config } from '../config/options'
 import type { HostContext } from '../types'
@@ -31,7 +32,11 @@ export const backend = defineService({
     const ctx = getServerContext<HostContext>(server)
     const config = getServerOptions<Config>(server)
     const override = id === 'codex' ? config.codexPath : id === 'claude' ? config.claudePath : config.jouzuPath
-    const result = await detectBackend(id, override, { timeoutMs: probeTimeout(id, config.probeTimeoutMs) })
+    let result = await detectBackend(id, override, { timeoutMs: probeTimeout(id, config.probeTimeoutMs) })
+    // Explicit configuration and user PATH installations retain priority.
+    if (id === 'jouzu' && override === undefined && !result.detection.installed
+      && result.detection.hint?.startsWith('BRIDGE_EXECUTABLE_MISSING') && process.env.DSH_MANAGED_JOUZU_PATH)
+      result = await detectBackend(id, process.env.DSH_MANAGED_JOUZU_PATH, { timeoutMs: probeTimeout(id, config.probeTimeoutMs) })
     try {
       const modules = await loadRuntimeModules(ctx.loader)
       if (!runtime.ready || typeof modules.appendPluginRecord !== 'function' || typeof modules.pluginRecordOf !== 'function' || typeof ctx.sessions.get !== 'function' || typeof ctx.sessionProjections.stateOf !== 'function')

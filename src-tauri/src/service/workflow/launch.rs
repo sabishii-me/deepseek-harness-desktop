@@ -637,6 +637,10 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
         "DSH_HOME".to_string(),
         dsh_home.to_string_lossy().into_owned(),
     );
+    let jouzu_entry = crate::bridge::jouzu::managed_entry(&app_handle);
+    if jouzu_entry.is_file() && config::get_base_dir(&app_handle).join("dependencies/jouzu/.verified").is_file() {
+        envs.insert("DSH_MANAGED_JOUZU_PATH".to_string(), jouzu_entry.to_string_lossy().into_owned());
+    }
     envs.insert("DSH_TELEMETRY_DISABLED".to_string(), "1".to_string());
     envs.insert("NO_COLOR".to_string(), "1".to_string());
     envs.insert("DSH_WEB_PORT".to_string(), setting.port.to_string());

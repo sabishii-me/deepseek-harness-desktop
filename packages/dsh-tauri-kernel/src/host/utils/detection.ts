@@ -83,7 +83,7 @@ export async function resolveNativeCommand(backend: 'codex' | 'claude' | 'jouzu'
   entry = await realpath(entry)
   const script = /\.[cm]?js$/i.test(entry)
   if (packageRoot !== undefined || script) {
-    const root = packageRoot ?? (backend === 'codex' ? dirname(dirname(entry)) : dirname(entry))
+    const root = packageRoot ?? (backend === 'jouzu' ? dirname(dirname(entry)) : backend === 'codex' ? dirname(dirname(entry)) : dirname(entry))
     const metadata = JSON.parse(await boundedRead(join(root, 'package.json'))) as { name?: string }
     const expected = PACKAGE_NAMES[backend]
     if (metadata.name !== expected)
