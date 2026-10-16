@@ -19,7 +19,7 @@ export const identity = defineService({
       throw new Error('BRIDGE_DISPOSED: Kernel projection owner changed during registration')
     const nonemptyId = z.string().min(1).refine(value => value.trim().length > 0)
     const bindingSchema = z.object({
-      backend: z.enum(['codex', 'claude']),
+      backend: z.enum(['codex', 'claude', 'jouzu']),
       nativeSessionId: nonemptyId,
       sessionId: nonemptyId,
     }).strict().readonly()

@@ -20,6 +20,6 @@ export interface NativeModelCatalog {
 }
 
 export interface NativeModelDirectory extends NativeModelCatalog {
-  backend: 'codex' | 'claude'
+  backend: 'codex' | 'claude' | 'jouzu'
   current: NativeTurnOptions
 }

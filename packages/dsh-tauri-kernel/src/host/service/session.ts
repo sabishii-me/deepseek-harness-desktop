@@ -13,6 +13,7 @@ import { isAbsolute } from 'node:path'
 import { getServerContext } from 'dsh-h3/utils'
 import { defineService, resolveUngroupedSessionPath } from 'dsh-tauri'
 import { createClaudeSession } from '../backends/claude'
+import { createJouzuSession } from '../backends/jouzu'
 import { createCodexSession } from '../backends/codex'
 import { NativeBridgeError } from '../backends/transport'
 import { BRIDGE_PROVIDER, KERNEL_RECORD_TYPE, SESSION_TITLE_PURPOSE } from '../config/constants'
@@ -488,7 +489,7 @@ async function connect(agent: Agent, id: KernelBinding['backend'], storedId: str
     approval: (...args) => activeSink(agent, controller).approval(...args),
     questions: (...args) => activeSink(agent, controller).questions(...args),
   }
-  const factory = id === 'codex' ? createCodexSession : createClaudeSession
+  const factory = id === 'codex' ? createCodexSession : id === 'claude' ? createClaudeSession : createJouzuSession
   const permission = permissionOf(agent.session)
   const native = await factory(resolved.command, agent.session.header.cwd!, storedId, nativeSink, signal, permission === undefined ? options : { ...options, permission }, nativeAttachments(getServerContext<HostContext>(server)))
   try {

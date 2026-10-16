@@ -11,10 +11,11 @@ import { loadRuntimeModules } from '../utils/runtime-modules'
 import { runtimeVersion } from '../utils/runtime-version'
 
 export const backend = defineService({
-  async resolve(id: 'codex' | 'claude'): Promise<DetectedCommand> {
+  async resolve(id: 'codex' | 'claude' | 'jouzu'): Promise<DetectedCommand> {
     const ctx = getServerContext<HostContext>(server)
     const config = getServerOptions<Config>(server)
-    const result = await detectBackend(id, id === 'codex' ? config.codexPath : config.claudePath, { timeoutMs: config.probeTimeoutMs })
+    const override = id === 'codex' ? config.codexPath : id === 'claude' ? config.claudePath : config.jouzuPath
+    const result = await detectBackend(id, override, { timeoutMs: config.probeTimeoutMs })
     try {
       const modules = await loadRuntimeModules(ctx.loader)
       if (!runtime.ready || typeof modules.appendPluginRecord !== 'function' || typeof modules.pluginRecordOf !== 'function' || typeof ctx.sessions.get !== 'function' || typeof ctx.sessionProjections.stateOf !== 'function')
@@ -35,7 +36,7 @@ export const backend = defineService({
 
   async getCatalog(): Promise<BackendDetection[]> {
     const ctx = getServerContext<HostContext>(server)
-    const results = await Promise.all([backend.resolve('codex'), backend.resolve('claude')])
+    const results = await Promise.all([backend.resolve('codex'), backend.resolve('claude'), backend.resolve('jouzu')])
     return [{ id: 'dsh', installed: true, auth: 'ok', version: await runtimeVersion(ctx.loader), drift: false, hint: null }, ...results.map(result => result.detection)]
   },
 })

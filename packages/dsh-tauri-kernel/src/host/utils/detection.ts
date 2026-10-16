@@ -20,6 +20,13 @@ export interface DetectedCommand {
   command?: NativeCommand
 }
 
+/** Published package name each backend's CLI wrapper must resolve to. */
+export const PACKAGE_NAMES: Record<'codex' | 'claude' | 'jouzu', string> = {
+  codex: '@openai/codex',
+  claude: '@anthropic-ai/claude-code',
+  jouzu: 'jouzu',
+}
+
 export function nativeEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const clean = { ...env }
   for (const key of Object.keys(clean)) {
@@ -29,7 +36,7 @@ export function nativeEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.
   return clean
 }
 
-export async function resolveNativeCommand(backend: 'codex' | 'claude', override: string | undefined, options: DetectionOptions = {}): Promise<NativeCommand> {
+export async function resolveNativeCommand(backend: 'codex' | 'claude' | 'jouzu', override: string | undefined, options: DetectionOptions = {}): Promise<NativeCommand> {
   const platform = options.platform ?? process.platform
   const env = nativeEnvironment(options.env)
   const extensions = platform === 'win32' ? ['.exe', '.cmd', '.ps1', ''] : ['']
@@ -63,25 +70,28 @@ export async function resolveNativeCommand(backend: 'codex' | 'claude', override
   const suffix = extname(entry).toLowerCase()
   if (suffix === '.cmd' || suffix === '.ps1') {
     const text = await boundedRead(entry)
-    const packagePath = backend === 'codex' ? '@openai[/\\\\]codex[/\\\\]bin[/\\\\]codex\\.js' : '@anthropic-ai[/\\\\]claude-code[/\\\\](?:cli\\.js|bin[/\\\\]claude(?:\\.exe)?)'
+    const shimPath = backend === 'jouzu'
+      ? '(?:@[\\w.-]+[/\\\\])?jouzu[/\\\\]dist[/\\\\]cli\\.js'
+      : undefined
+    const packagePath = shimPath ?? (backend === 'codex' ? '@openai[/\\\\]codex[/\\\\]bin[/\\\\]codex\\.js' : '@anthropic-ai[/\\\\]claude-code[/\\\\](?:cli\\.js|bin[/\\\\]claude(?:\\.exe)?)')
     const match = new RegExp(`(?:node_modules[/\\\\]${packagePath})`, 'i').exec(text)
     if (!match)
       throw new Error('BRIDGE_SHIM_UNSUPPORTED: 此命令包装器无法安全解析，请配置原生可执行文件路径。')
     entry = join(dirname(entry), match[0].replace(/[\\/]/g, '/'))
-    packageRoot = backend === 'claude' && /\.js$/i.test(entry) ? dirname(entry) : dirname(dirname(entry))
+    packageRoot = backend === 'jouzu' ? dirname(dirname(dirname(entry))) : backend === 'claude' && /\.js$/i.test(entry) ? dirname(entry) : dirname(dirname(entry))
   }
   entry = await realpath(entry)
   const script = /\.[cm]?js$/i.test(entry)
   if (packageRoot !== undefined || script) {
     const root = packageRoot ?? (backend === 'codex' ? dirname(dirname(entry)) : dirname(entry))
     const metadata = JSON.parse(await boundedRead(join(root, 'package.json'))) as { name?: string }
-    const expected = backend === 'codex' ? '@openai/codex' : '@anthropic-ai/claude-code'
+    const expected = PACKAGE_NAMES[backend]
     if (metadata.name !== expected)
       throw new Error('BRIDGE_PACKAGE_MISMATCH: CLI 包装器不是所选内核的官方安装。')
   }
   if (script) {
     const root = backend === 'codex' ? dirname(dirname(entry)) : dirname(entry)
-    if (backend === 'claude')
+    if (backend === 'claude' || backend === 'jouzu')
       return { file: process.execPath, args: [entry], env }
     const target = codexTarget(platform, options.arch ?? process.arch)
     const platformPackage = `@openai/codex-${platform === 'win32' ? 'win32' : platform}-${options.arch ?? process.arch}`
@@ -97,7 +107,7 @@ export async function resolveNativeCommand(backend: 'codex' | 'claude', override
   return { file: await realpath(entry), args: [], env }
 }
 
-export async function detectBackend(backend: 'codex' | 'claude', override?: string, options: DetectionOptions = {}): Promise<DetectedCommand> {
+export async function detectBackend(backend: 'codex' | 'claude' | 'jouzu', override?: string, options: DetectionOptions = {}): Promise<DetectedCommand> {
   const detection: BackendDetection = { id: backend, installed: false, auth: 'unknown', version: null, drift: false, hint: null }
   try {
     const command = await resolveNativeCommand(backend, override, options)
@@ -109,12 +119,16 @@ export async function detectBackend(backend: 'codex' | 'claude', override?: stri
     if (!detection.version)
       throw new Error('BRIDGE_VERSION_UNRECOGNIZED: CLI 未返回可识别版本。')
     const help = await probe(command, backend === 'codex' ? ['app-server', '--help'] : ['--help'], timeout)
-    if (help.code !== 0 || (backend === 'claude' && !/stream-json/.test(help.output))) {
+    if (help.code !== 0 || (backend === 'claude' && !/stream-json/.test(help.output)) || (backend === 'jouzu' && !/--mode/.test(help.output))) {
       detection.drift = true
       throw new Error('BRIDGE_PROTOCOL_UNAVAILABLE: 本机 CLI 不支持所需桥接协议，请更新 CLI。')
     }
     detection.installed = true
-    const auth = await probe(command, backend === 'codex' ? ['login', 'status'] : ['auth', 'status', '--json'], timeout).catch(() => undefined)
+    // Jouzu owns its model credentials and reports them through its own
+    // configuration, so the CLI auth probes used for Codex/Claude do not apply.
+    const auth = backend === 'jouzu'
+      ? undefined
+      : await probe(command, backend === 'codex' ? ['login', 'status'] : ['auth', 'status', '--json'], timeout).catch(() => undefined)
     if (auth) {
       if (backend === 'codex') {
         detection.auth = auth.code === 0 ? 'ok' : 'unknown'

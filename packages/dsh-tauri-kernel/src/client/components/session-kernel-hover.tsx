@@ -7,7 +7,7 @@ import { kernelContentAvailable } from '../service/kernel-version'
 import { kernelStore } from '../store/modules/kernel-store'
 import { KernelIcon } from './kernel-icon'
 
-const LABELS = { dsh: 'DeepSeek Harness', codex: 'Codex', claude: 'Claude' }
+const LABELS = { dsh: 'DeepSeek Harness', codex: 'Codex', claude: 'Claude', jouzu: 'Jouzu' }
 
 export function SessionKernelHover(props: SessionKernelHoverProps): ReactElement | null {
   locale.useLocale()

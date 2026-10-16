@@ -137,6 +137,7 @@ const now = 1_791_576_000_000
 const codex: BackendDetection = { id: 'codex', installed: true, auth: 'ok', version: '0.147.0', drift: false, hint: null }
 const claude: BackendDetection = { id: 'claude', installed: false, auth: 'unknown', version: null, drift: false, hint: 'BRIDGE_EXECUTABLE_MISSING: Claude CLI is not installed' }
 const dsh: BackendDetection = { id: 'dsh', installed: true, auth: 'ok', version: null, drift: false, hint: null }
+const jouzu: BackendDetection = { id: 'jouzu', installed: false, auth: 'unknown', version: null, drift: false, hint: 'BRIDGE_EXECUTABLE_MISSING: Jouzu CLI is not installed' }
 const catalog: NativeModelCatalog = { defaultModel: 'native/default', models: [{ id: 'native/default', name: 'Native default', reasoning: { efforts: [{ id: 'normal', name: 'Normal' }, { id: 'deep', name: 'Deep' }], defaultEffort: 'normal' } }, { id: 'native/plain', name: 'Native plain' }] }
 
 function deferred<T>() {
@@ -183,7 +184,7 @@ beforeEach(async () => {
   vi.mocked(createCodexSession).mockReset()
   vi.mocked(createClaudeSession).mockReset()
   vi.mocked(detectBackend).mockReset()
-  vi.mocked(detectBackend).mockImplementation(async id => ({ detection: { ...(id === 'codex' ? codex : claude) }, command: { file: 'boundary-only', args: [id] } }))
+  vi.mocked(detectBackend).mockImplementation(async id => ({ detection: { ...(id === 'codex' ? codex : id === 'claude' ? claude : jouzu) }, command: { file: 'boundary-only', args: [id] } }))
   context = new Context()
   agents = new AgentRegistry(context)
   sessions = new sessionModule.SessionStore(context)
@@ -305,10 +306,10 @@ describe('exported bridge plugin HTTP dependency boundary', () => {
     const base = await start()
     const response = await fetch(`${base}/api/tauri/bridge/backends`)
     expect(response.status).toBe(200)
-    expect(await response.json()).toEqual([dsh, { ...codex, bridgeReady: true }, { ...claude, bridgeReady: true }])
+    expect(await response.json()).toEqual([dsh, { ...codex, bridgeReady: true }, { ...claude, bridgeReady: true }, { ...jouzu, bridgeReady: true }])
     expect(requestRejection).toHaveBeenCalledOnce()
     expect(requestRejection.mock.calls[0]![0].method).toBe('GET')
-    expect(vi.mocked(detectBackend).mock.calls.map(([id]) => id).sort()).toEqual(['claude', 'codex'])
+    expect(vi.mocked(detectBackend).mock.calls.map(([id]) => id).sort()).toEqual(['claude', 'codex', 'jouzu'])
     expect(projections.stateOf(sessionModule.Session.create(sessionModule.SessionId('guard-regression')), 'bridgeKernel')?.binding).toBeNull()
   })
 
@@ -360,6 +361,7 @@ describe('exported bridge plugin HTTP dependency boundary', () => {
       dsh,
       { ...codex, bridgeReady: false, hint: 'BRIDGE_CORE_UNAVAILABLE: 当前核心未提供完整的官方内核桥接接口，不能连接本机 CLI。' },
       { ...claude, bridgeReady: false },
+      { ...jouzu, bridgeReady: false },
     ])
     expect(requestRejection).toHaveBeenCalledOnce()
   })

@@ -53,6 +53,7 @@ beforeEach(() => {
       { id: 'dsh', installed: true, auth: 'ok', version: '0.2.1-alpha.2', drift: false, hint: null },
       { id: 'codex', installed: true, auth: 'ok', version: '1.0', drift: false, hint: null },
       { id: 'claude', installed: false, auth: 'unknown', version: null, drift: false, hint: null },
+      { id: 'jouzu', installed: false, auth: 'unknown', version: null, drift: false, hint: null },
     ],
   })
 })
@@ -66,14 +67,14 @@ afterEach(() => {
 afterAll(() => vi.unstubAllGlobals())
 
 describe('hero kernel picker', () => {
-  it('starts unselected with the two native kernels and no persisted default', () => {
+  it('starts unselected with every selectable native kernel and no persisted default', () => {
     const props = heroProps()
     const view = render(<HeroKernel {...props} />)
     const chip = view.getByRole('button', { name: 'Kernel' })
     expect(chip.textContent).toContain('Select kernel')
     expect((chip as HTMLButtonElement).disabled).toBe(false)
     fireEvent.click(chip)
-    expect(view.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['Codex', 'Claude · Not installed'])
+    expect(view.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['Codex', 'Claude · Not installed', 'Jouzu · Not installed'])
     expect(view.getByRole('menu').querySelectorAll('[aria-checked="true"]')).toHaveLength(0)
   })
 
@@ -147,7 +148,7 @@ describe('hero kernel picker', () => {
     expect(chip.getAttribute('title')).toContain('its kernel cannot be changed')
     expect(chip.getAttribute('title')).not.toContain('model and kernel cannot be changed')
     fireEvent.click(chip)
-    expect(view.getByRole('menu').querySelectorAll('button')).toHaveLength(2)
+    expect(view.getByRole('menu').querySelectorAll('button')).toHaveLength(3)
     expect((view.getByRole('menuitem', { name: 'Claude · Not installed' }) as HTMLButtonElement).disabled).toBe(true)
   })
 

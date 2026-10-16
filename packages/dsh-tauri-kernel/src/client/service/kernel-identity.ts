@@ -7,7 +7,7 @@ export function backendFromIdentity(value: unknown): BackendId | undefined {
   if (typeof value !== 'object')
     return undefined
   const binding = value as Partial<KernelBinding>
-  return (binding.backend === 'codex' || binding.backend === 'claude')
+  return (binding.backend === 'codex' || binding.backend === 'claude' || binding.backend === 'jouzu')
     && typeof binding.nativeSessionId === 'string' && binding.nativeSessionId.trim() !== ''
     && typeof binding.sessionId === 'string' && binding.sessionId.trim() !== ''
     ? binding.backend

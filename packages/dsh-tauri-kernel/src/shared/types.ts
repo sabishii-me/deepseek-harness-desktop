@@ -1,6 +1,6 @@
 import type { NativeTurnOptions } from './native-model'
 
-export type BackendId = 'dsh' | 'codex' | 'claude'
+export type BackendId = 'dsh' | 'codex' | 'claude' | 'jouzu'
 
 export interface BackendDetection {
   id: BackendId

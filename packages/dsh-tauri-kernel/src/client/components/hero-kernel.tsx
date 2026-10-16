@@ -10,8 +10,8 @@ import { kernelContentAvailable } from '../service/kernel-version'
 import { kernelStore } from '../store/modules/kernel-store'
 import { KernelIcon } from './kernel-icon'
 
-const LABELS: Record<BackendId, string> = { dsh: 'DeepSeek Harness', codex: 'Codex', claude: 'Claude' }
-const CHOICES = ['codex', 'claude'] as const
+const LABELS: Record<BackendId, string> = { dsh: 'DeepSeek Harness', codex: 'Codex', claude: 'Claude', jouzu: 'Jouzu' }
+const CHOICES = ['codex', 'claude', 'jouzu'] as const
 
 function backendHint(backend: BackendDetection | undefined): string | undefined {
   if (backend === undefined || !backend.installed)

@@ -86,7 +86,7 @@ export interface ModelBody extends NativeTurnOptions {
 }
 
 export interface CreateBody {
-  backend: 'codex' | 'claude'
+  backend: 'codex' | 'claude' | 'jouzu'
   workspaceId?: string
   cwd?: string
   agentPreset?: string
