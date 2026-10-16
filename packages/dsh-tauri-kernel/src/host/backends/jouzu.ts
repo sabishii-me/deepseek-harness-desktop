@@ -38,6 +38,8 @@ interface JouzuRun {
   readonly fragments: Map<number, string>
   /** Tool calls announced by the assistant and awaiting their execution events. */
   readonly announced: Set<string>
+  /** Arguments as presented to the official sink, keyed by tool-call id. */
+  readonly presented: Map<string, string>
   settled: boolean
   failure?: Error
 }
@@ -145,6 +147,7 @@ class JouzuSession implements NativeSession {
       signal,
       fragments: new Map(),
       announced: new Set(),
+      presented: new Map(),
       settled: false,
     }
     this.active = run
@@ -240,8 +243,14 @@ class JouzuSession implements NativeSession {
       const name = typeof message.toolName === 'string' ? message.toolName : undefined
       if (callId === undefined || name === undefined)
         return
+      // The official sink only accepts `toolStart` for a call it has already
+      // seen as an assistant tool-call block, so the presented arguments are
+      // kept here and reused verbatim (the sink compares them for equality).
+      const presented = run.presented.get(callId)
+      if (presented === undefined)
+        return
       run.announced.add(callId)
-      this.sink.toolStart(callId, name, compact(message.args))
+      this.sink.toolStart(callId, name, presented)
       return
     }
     if (type === 'tool_execution_end') {
@@ -278,6 +287,18 @@ class JouzuSession implements NativeSession {
           this.sink.thinking(lane, event.delta)
         return
       }
+      case 'text_end': {
+        // A stream is only settled once its final content is acknowledged;
+        // deltas alone leave the official sink waiting forever.
+        const text = typeof event.content === 'string' ? event.content : ''
+        this.sink.assistant(lane, [{ type: 'text', text }])
+        return
+      }
+      case 'thinking_end': {
+        const text = typeof event.content === 'string' ? event.content : ''
+        this.sink.assistant(lane, [{ type: 'thinking', text }])
+        return
+      }
       case 'toolcall_start': {
         run.fragments.set(index, '')
         return
@@ -288,7 +309,18 @@ class JouzuSession implements NativeSession {
         return
       }
       case 'toolcall_end': {
+        const fragments = run.fragments.get(index) ?? ''
         run.fragments.delete(index)
+        const call = record(event.toolCall ?? {})
+        const id = typeof call.id === 'string' ? call.id : undefined
+        const name = typeof call.name === 'string' ? call.name : undefined
+        if (id === undefined || name === undefined)
+          return
+        // Arguments arrive either as a complete object on `toolCall` or as the
+        // JSON fragments accumulated above; prefer the object when present.
+        const arguments_ = call.arguments === undefined ? fragments || '{}' : compact(call.arguments)
+        run.presented.set(id, arguments_)
+        this.sink.assistant(lane, [{ type: 'tool-call', id, name, arguments: arguments_ }])
         return
       }
       default:

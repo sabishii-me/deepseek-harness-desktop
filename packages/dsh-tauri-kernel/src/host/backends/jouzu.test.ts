@@ -98,12 +98,15 @@ describe('jouzu native kernel', () => {
     const prompted = fixture.next(frame => frame.type === 'prompt')
     const turn = session.submit([userMessage('list files')], new AbortController().signal)
     await prompted
-    fixture.send({ type: 'tool_execution_start', toolCallId: 'call-1', toolName: 'ls', args: { path: 'C:/fixture' } })
+    const args = { path: 'C:/fixture' }
+    fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'toolcall_start', contentIndex: 0, id: 'call-1', toolName: 'ls' } })
+    fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'toolcall_end', contentIndex: 0, toolCall: { type: 'toolCall', id: 'call-1', name: 'ls', arguments: args } } })
+    fixture.send({ type: 'tool_execution_start', toolCallId: 'call-1', toolName: 'ls', args })
     fixture.send({ type: 'tool_execution_end', toolCallId: 'call-1', toolName: 'ls', result: { content: [{ type: 'text', text: 'a.txt\n' }] }, isError: false })
     fixture.send({ type: 'turn_end' })
     await turn
 
-    expect(sink.toolStart).toHaveBeenCalledWith('call-1', 'ls', JSON.stringify({ path: 'C:/fixture' }))
+    expect(sink.toolStart).toHaveBeenCalledWith('call-1', 'ls', JSON.stringify(args))
     expect(sink.toolEnd).toHaveBeenCalledWith('call-1', 'a.txt\n', false)
   })
 
