@@ -81,7 +81,7 @@ describe('jouzu native kernel', () => {
     fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'planning' } })
     fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'text_start', contentIndex: 1 } })
     fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 1, delta: 'hello' } })
-    fixture.send({ type: 'turn_end' })
+    fixture.send({ type: 'agent_settled' })
     await turn
 
     expect(sink.thinking).toHaveBeenCalledWith('jouzu:0', 'planning')
@@ -103,7 +103,7 @@ describe('jouzu native kernel', () => {
     fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'toolcall_end', contentIndex: 0, toolCall: { type: 'toolCall', id: 'call-1', name: 'ls', arguments: args } } })
     fixture.send({ type: 'tool_execution_start', toolCallId: 'call-1', toolName: 'ls', args })
     fixture.send({ type: 'tool_execution_end', toolCallId: 'call-1', toolName: 'ls', result: { content: [{ type: 'text', text: 'a.txt\n' }] }, isError: false })
-    fixture.send({ type: 'turn_end' })
+    fixture.send({ type: 'agent_settled' })
     await turn
 
     expect(sink.toolStart).toHaveBeenCalledWith('call-1', 'ls', JSON.stringify(args))

@@ -55,7 +55,7 @@ describe('jouzu assistant settlement', () => {
     fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'text_start', contentIndex: 1 } })
     fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 1, delta: 'hello' } })
     fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'text_end', contentIndex: 1, content: 'hello' } })
-    fixture.send({ type: 'turn_end' })
+    fixture.send({ type: 'agent_settled' })
     await turn
 
     expect(sink.assistant).toHaveBeenCalledWith('jouzu:0', [{ type: 'thinking', text: 'ponder' }])
@@ -78,7 +78,7 @@ describe('jouzu assistant settlement', () => {
     fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'toolcall_end', contentIndex: 0, toolCall: { type: 'toolCall', id: 'call-1', name: 'bash', arguments: args } } })
     fixture.send({ type: 'tool_execution_start', toolCallId: 'call-1', toolName: 'bash', args })
     fixture.send({ type: 'tool_execution_end', toolCallId: 'call-1', toolName: 'bash', result: { content: [{ type: 'text', text: 'hi\n' }] }, isError: false })
-    fixture.send({ type: 'turn_end' })
+    fixture.send({ type: 'agent_settled' })
     await turn
 
     // The presented arguments must be byte-identical to the ones used for
@@ -87,5 +87,57 @@ describe('jouzu assistant settlement', () => {
     expect(sink.assistant).toHaveBeenCalledWith('jouzu:0', [{ type: 'tool-call', id: 'call-1', name: 'bash', arguments: presented }])
     expect(sink.toolStart).toHaveBeenCalledWith('call-1', 'bash', presented)
     expect(sink.toolEnd).toHaveBeenCalledWith('call-1', 'hi\n', false)
+  })
+})
+
+/**
+ * A Jouzu turn that calls a tool emits `turn_end` and then starts another turn
+ * for the result:
+ *
+ *   agent_start, turn_start, tool_execution_start, tool_execution_end,
+ *   turn_end, turn_start, turn_end, agent_settled
+ *
+ * Settling on the first `turn_end` handed the turn back to DSH while Jouzu was
+ * still reasoning, which is why tool-using prompts (e.g. `git status`) never
+ * produced a reply. Only `agent_settled` completes the run.
+ */
+describe('jouzu turn completion', () => {
+  it('keeps the turn open across a tool round and settles on agent_settled', async () => {
+    const fixture = jouzuProcess()
+    const sink = createSink()
+    vi.mocked(spawn).mockReturnValue(fixture.child)
+    const session = await createJouzuSession(command, 'C:/fixture', null, sink, new AbortController().signal)
+    sessions.push(session)
+
+    const prompted = fixture.next(frame => frame.type === 'prompt')
+    const turn = session.submit([userMessage('run git status')], new AbortController().signal)
+    await prompted
+
+    const args = { command: 'git status' }
+    let settled = false
+    void turn.then(() => { settled = true })
+
+    fixture.send({ type: 'turn_start' })
+    fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'toolcall_start', contentIndex: 0, id: 'call-1', toolName: 'bash' } })
+    fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'toolcall_end', contentIndex: 0, toolCall: { type: 'toolCall', id: 'call-1', name: 'bash', arguments: args } } })
+    fixture.send({ type: 'tool_execution_start', toolCallId: 'call-1', toolName: 'bash', args })
+    fixture.send({ type: 'tool_execution_end', toolCallId: 'call-1', toolName: 'bash', result: { content: [{ type: 'text', text: 'clean\n' }] }, isError: false })
+    fixture.send({ type: 'turn_end' })
+    // The intermediate turn boundary must not release the turn.
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(settled).toBe(false)
+
+    fixture.send({ type: 'turn_start' })
+    fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'text_start', contentIndex: 0 } })
+    fixture.send({ type: 'message_update', assistantMessageEvent: { type: 'text_end', contentIndex: 0, content: 'Clean tree.' } })
+    fixture.send({ type: 'turn_end' })
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(settled).toBe(false)
+
+    fixture.send({ type: 'agent_settled' })
+    await turn
+    expect(settled).toBe(true)
+    expect(sink.toolEnd).toHaveBeenCalledWith('call-1', 'clean\n', false)
+    expect(sink.assistant).toHaveBeenCalledWith('jouzu:0', [{ type: 'text', text: 'Clean tree.' }])
   })
 })

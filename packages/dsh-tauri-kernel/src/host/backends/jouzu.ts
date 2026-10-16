@@ -280,7 +280,11 @@ class JouzuSession implements NativeSession {
       this.sink.toolEnd(callId, toolResultText(message.result), failed)
       return
     }
-    if (type === 'turn_end' || type === 'agent_settled') {
+    // `turn_end` closes one tool-loop round, not the whole run: a turn that
+    // calls a tool emits `turn_end` and then starts another turn for the
+    // result. Only `agent_settled` marks the point at which Jouzu has nothing
+    // further to say, so that is the sole completion signal.
+    if (type === 'agent_settled') {
       if (run.settled)
         return
       run.settled = true
