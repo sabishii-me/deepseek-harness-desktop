@@ -42,8 +42,9 @@ pub async fn get_jouzu_installation(app: AppHandle) -> Result<JouzuInstallation,
 pub async fn install_optional_jouzu(app: AppHandle) -> Result<JouzuInstallation, String> {
     let _lock = INSTALL.try_lock().map_err(|_| "Jouzu installation already running")?;
     let entry = managed_entry(&app);
-    if get_jouzu_installation(app.clone()).await?.installed {
-        return get_jouzu_installation(app).await;
+    let current = get_jouzu_installation(app.clone()).await?;
+    if current.installed || current.external_detected {
+        return Ok(current);
     }
     let node = crate::config::get_node_binary_path(&app);
     let base = node.parent().ok_or("Node runtime directory missing")?;

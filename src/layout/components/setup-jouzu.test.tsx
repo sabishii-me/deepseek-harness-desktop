@@ -23,8 +23,21 @@ describe('optional Jouzu onboarding', () => {
   it('does not offer reinstall or uninstall for an installed managed runtime', async () => {
     invoke.mockResolvedValue({ installed: true, managed: true, version: '0.2.0' })
     render(<SetupJouzu />)
-    const button = await screen.findByRole('button', { name: 'Managed 0.2.0 installed' })
-    expect((button as HTMLButtonElement).disabled).toBe(true)
+    await screen.findByText('Managed Jouzu 0.2.0 installed — no installation needed.')
+    expect(screen.queryByRole('button')).toBeNull()
     expect(invoke).toHaveBeenCalledTimes(1)
   })
+})
+
+
+it('hides install while detection is pending and when Jouzu exists on PATH', async () => {
+  let resolve!: (value: unknown) => void
+  invoke.mockReturnValue(new Promise(accept => { resolve = accept }))
+  render(<SetupJouzu />)
+  expect(screen.queryByRole('button')).toBeNull()
+  expect(screen.getByRole('status').textContent).toBe('Checking for Jouzu…')
+  resolve({ installed: false, managed: false, version: '0.2.0', externalDetected: true })
+  await screen.findByText(/Existing Jouzu detected/)
+  expect(screen.queryByRole('button')).toBeNull()
+  expect(invoke).toHaveBeenCalledTimes(1)
 })
