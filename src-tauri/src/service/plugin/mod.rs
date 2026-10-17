@@ -76,7 +76,7 @@ pub(crate) use internal::cancel as cancel_internal_plugins;
 pub(crate) use internal::ensure as ensure_internal_plugins;
 pub use preset::repo_url_of;
 pub(crate) use preset::{
-    bundled_plugin_dir, current_preset_hash, load_presets, preinstall_pending,
+    bundled_dir_for, bundled_plugin_dir, current_preset_hash, load_presets, preinstall_pending,
     remove_legacy_bundled_plugins,
 };
 pub(crate) use safe::purge_user_plugins_in_safe_profile;

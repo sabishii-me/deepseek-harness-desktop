@@ -560,7 +560,7 @@ fn link_required_plugins(app_handle: &AppHandle, core_root: &Path) -> Result<(),
     // profile 中旧版本遗留的 link 路径。这样应用升级后旧 link 会被精确替换。
     for preset in internal {
         let name = crate::service::plugin::installed_name(preset);
-        let Some(source) = crate::service::plugin::bundled_plugin_dir(app_handle, &preset.id)
+        let Some(source) = crate::service::plugin::bundled_dir_for(app_handle, preset)
         else {
             log::warn!(
                 "CORE_PLUGIN_BUNDLE_MISSING: bundled source unavailable for {name}, skipping core link"
