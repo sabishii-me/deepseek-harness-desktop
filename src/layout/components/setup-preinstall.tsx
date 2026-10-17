@@ -3,9 +3,9 @@ import type { PluginProcess } from '@/store/modules/plugins'
 import type { OnboardingRemoteState, OnboardingStep, PreinstallKernel, PreinstallPlugin } from '@/store/modules/preinstall'
 import { ArrowUpRightFromSquare, ArrowUturnCcwLeft, Comments, Copy, Cubes3Overlap, LayoutSideContentLeft, PlugConnection, ShoppingCart, Xmark } from '@gravity-ui/icons'
 import { Button, Card, Checkbox, Chip, ScrollShadow, Spinner, Switch, Typography } from '@heroui/react'
-import { useIntervalFn, useMount } from '@reause/core'
+import { useIntervalFn, useMount, useWatch } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Else, If, Then } from 'react-if-lite'
 import { useStore } from 'valtio-define'
@@ -400,8 +400,26 @@ function RemoteCallStep({ step, installing }: { step: OnboardingStep, installing
   }, [spec, step.id])
 
   useMount(() => { void refresh() })
+  // 轮询何时停：判定为完成**并且连续两次拿到相同的状态**才停。
+  //
+  // 「完成」只说明判定字段到位了，不保证同一时刻的展示字段都已填好——一个 provider
+  // 完全可能在完成态里先给出空的结果集，稍后才补齐（例如模型列表来自一次独立的
+  // 拉取）。只要一看到完成就停轮询，卡片就会永久停在那个空的中间态上。
+  //
+  // 这里不判断任何具体字段的语义（宿主不知道哪个值是「目录还没拉完」）：只要求
+  // 完成态下的状态值稳定下来。多轮询一两次，代价可忽略。
+  const [stableReady, setStableReady] = useState(false)
+  const previous = useRef<string | null>(null)
+  useWatch([remote], () => {
+    if (remote === null)
+      return
+    const signature = JSON.stringify(remote.state)
+    if (remote.ready && previous.current === signature)
+      setStableReady(true)
+    previous.current = signature
+  })
   useIntervalFn(() => {
-    if (busy || remote?.ready === true)
+    if (busy || stableReady)
       return
     void refresh()
   }, spec?.pollMs ?? 1500)

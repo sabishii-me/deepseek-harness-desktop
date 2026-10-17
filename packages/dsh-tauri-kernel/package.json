@@ -19,6 +19,7 @@
   "types": "./dist/index.d.ts",
   "files": ["cordis.patch.yml", "dist"],
   "dsh": {
+    "runtimeDependencies": ["@sabishii-me/dsh-jouzu-bridge"],
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-connection",

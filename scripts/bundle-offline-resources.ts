@@ -147,9 +147,9 @@ function bundleOwnPackage(spec: OwnPackage): void {
 for (const spec of OWN_PACKAGES)
   bundleOwnPackage(spec)
 
-// 内核包整体拷入（不只是 dist）：下面的步骤要读并改写它的 package.json，把
-// 桥接包声明为运行时依赖。只拷 dist 会留下一个没有清单的空目录，后续读取直接
-// 抛 ENOENT——而 dev 模式恰恰只读这棵资源树。
+// 内核包整体拷入（不只是 dist）。运行期依赖由它自己的 `dsh.runtimeDependencies`
+// 声明，随清单一起原样复制，构建期不改写任何字段——开发构建读的是源码清单
+// （`bundled_plugin_dir` 的开发覆盖），改写随包副本只会让两种构建行为不一致。
 {
   const kernelSource = join(repo, 'packages/dsh-tauri-kernel')
   const kernelTarget = join(modules, 'dsh-tauri-kernel')
@@ -164,27 +164,6 @@ for (const spec of OWN_PACKAGES)
     }
     cpSync(from, join(kernelTarget, entry), { recursive: true })
   }
-}
-// The kernel loads the Jouzu model bridge through the profile loader
-// (`ctx.loader.import('<pkg>/model-bridge')`), which resolves from the PROFILE's
-// node_modules — not from this resource tree. Declare the bundled bridge as a
-// real `link:` dependency of the kernel so the profile installer materializes it
-// next to the other kernels' dependencies; otherwise the import fails with
-// ERR_MODULE_NOT_FOUND and every kernel call answers 500.
-{
-  const kernelManifestPath = join(modules, 'dsh-tauri-kernel/package.json')
-  const kernelManifest = JSON.parse(readFileSync(kernelManifestPath, 'utf8'))
-  // Declared through `dsh.runtimeDependencies` (not `dependencies`) on purpose:
-  // the kernel is installed as a plain `link:` to this resource tree (no pnpm
-  // resolution), so a package-manager spec here would never be materialized.
-  // The profile self-heal links each declared runtime dependency into the
-  // profile's node_modules, which is where the loader resolves from.
-  kernelManifest.dsh = {
-    ...kernelManifest.dsh,
-    runtimeDependencies: ['@sabishii-me/dsh-jouzu-bridge'],
-  }
-  delete kernelManifest.dependencies['@sabishii-me/dsh-jouzu-bridge']
-  writeFileSync(kernelManifestPath, JSON.stringify(kernelManifest, null, 2))
 }
 function digest(dir: string): string {
  const hash = createHash('sha256')
