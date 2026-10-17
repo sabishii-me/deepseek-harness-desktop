@@ -36,58 +36,34 @@ const PNPM_PROBE_LIVENESS_INTERVAL: std::time::Duration = std::time::Duration::f
 pub(super) async fn ensure_pnpm(
     app_handle: &AppHandle,
     window: &WebviewWindow,
-    owner: ProcessOwner,
+    _owner: ProcessOwner,
 ) -> Result<bool, String> {
-    // 档案的 node_modules 由哪个 pnpm 主版本创建（.modules.yaml 的 storeDir 段）
+    // 只用随包分发的 pnpm（返回值恒为 true = 强制捆绑版）。
+    //
+    // 不接用用户系统里的 pnpm：用户机器可能没装；版本与档案 store 布局不一致时会以
+    // ERR_PNPM_UNEXPECTED_STORE 硬失败；用户也不希望应用去用或污染系统环境。捆绑版是
+    // 纯 JS 发行包、由我们自己的 node 运行，版本固定，行为可预测。
+    //
+    // 唯一还需要看的是**档案自己**的 store 主版本：如果它由别的 pnpm 主版本创建过，
+    // 安装元数据无法与我们将要使用的 pnpm 兼容，必须先重建，否则明知必败仍发车。
     let store_major = profile_store_major(app_handle);
-    let user_major = user_pnpm_major_version_bounded(app_handle, owner).await?;
-
-    // 1) store 主版本已知 → 优先选与 store 一致的 pnpm（用户版或捆绑版）
     if let Some(store) = store_major {
-        if user_major == Some(store) {
-            log::info!("Reusing user-installed pnpm (major {store}) matching profile store");
-            return Ok(false);
-        }
-        if bundled_pnpm_major(app_handle) == Some(store) {
-            log::info!("Using bundled pnpm (major {store}) matching profile store");
-            return Ok(true);
-        }
-        // 本机没有该 store 主版本的 pnpm（捆绑版与用户版都不匹配）：档案的安装
-        // 元数据已无法与将要使用的 pnpm 兼容，继续跑只会以
-        // `ERR_PNPM_UNEXPECTED_STORE` 失败。删掉元数据，让下面选出的 pnpm 以自身
-        // 主版本布局重建安装树，而不是明知必败仍发车。
-        log::warn!(
-            "No pnpm matches profile store major {store} (user {user_major:?}), resetting profile modules metadata"
-        );
-        if reset_incompatible_modules_metadata(app_handle) {
-            let _ = window.emit(
-                PREINSTALL_LOG_EVENT,
-                PreinstallLogPayload {
-                    line: format!(
-                        "[pnpm] no pnpm matches this profile's store major {store}; rebuilt the profile modules metadata for the pnpm in use"
-                    ),
-                    target: None,
-                    phase: None,
-                },
-            );
-        }
-    }
-
-    // 2) store 未知（全新档案/未装过依赖）或无可匹配版本 → 用户 pnpm ≥ 10 优先
-    match user_major {
-        Some(major) if major >= MIN_TRUSTED_PNPM_MAJOR => {
-            log::info!("Reusing user-installed pnpm (major {major}) for plugin install");
-            return Ok(false);
-        }
-        Some(major) => {
+        if bundled_pnpm_major(app_handle) != Some(store) {
             log::warn!(
-                "User pnpm major {major} < {MIN_TRUSTED_PNPM_MAJOR} (missing autoInstallPeers/workspace-root semantics), using bundled pnpm"
+                "Profile store major {store} differs from the bundled pnpm; resetting profile modules metadata"
             );
-        }
-        None => {
-            log::warn!(
-                "User pnpm version not detectable (broken/blocked shim?), using bundled pnpm"
-            );
+            if reset_incompatible_modules_metadata(app_handle) {
+                let _ = window.emit(
+                    PREINSTALL_LOG_EVENT,
+                    PreinstallLogPayload {
+                        line: format!(
+                            "[pnpm] rebuilt the profile modules metadata for the bundled pnpm (previous store major {store})"
+                        ),
+                        target: None,
+                        phase: None,
+                    },
+                );
+            }
         }
     }
 

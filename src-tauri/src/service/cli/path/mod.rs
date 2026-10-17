@@ -30,7 +30,7 @@ mod rc;
 mod registry;
 
 #[cfg(windows)]
-pub(crate) use pnpm::find_user_pnpm_executable;
+
 #[cfg(windows)]
 pub(crate) use registry::{
     delete_user_env, notify_environment_change, read_user_env, write_user_env,

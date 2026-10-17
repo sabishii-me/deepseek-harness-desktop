@@ -193,114 +193,30 @@ const REPAIR_OUTPUT_LIMIT: usize = 4000;
 /// 与 [`super::install::ensure_pnpm`] 同一套 store 主版本感知策略（pnpm 10 与 11
 /// 的 store 布局互不兼容，主版本不一致会 `ERR_PNPM_UNEXPECTED_STORE` 失败），
 /// 但修复路径**不触发下载**（启动阶段零额外下载）：
-/// - 档案 store 主版本已知 → 优先选主版本一致的 pnpm（捆绑版 → 用户版）；
-/// - store 未知（全新档案/未装过依赖）→ 捆绑版优先，否则用户版；
-/// - 全不匹配时仍退回捆绑版尽力一试（失败由调用方记录错误标记）。
+/// - 一律使用随包分发的 pnpm（不接用用户系统里的）。
 ///
-/// Windows 上 `.cmd`/`.bat` 无法被 CreateProcess 直接执行（需 cmd.exe 解析），
-/// 用户 pnpm 只接受 `.exe`。
+/// 与 node 同理：用户机器可能没装、版本可能与档案 store 布局不一致、且用户不希望
+/// 应用去用或污染系统环境。捆绑版是纯 JS 发行包，由我们自己的 node 运行，版本固定，
+/// 行为可预测。store 主版本不匹配时仍以它为唯一选择，失败由调用方记录错误标记
+/// （那是可诊断的真问题，不该用换一个 pnpm 来掩钭）。
 pub(crate) async fn pnpm_direct(
     app_handle: &AppHandle,
 ) -> Result<Option<(PathBuf, Vec<OsString>)>, String> {
-    use super::install::{bundled_pnpm_major, pnpm_major_version_at_bounded, profile_store_major};
-
     let bundled = config::get_pnpm_binary_path(app_handle);
-    let bundled_ready = bundled.exists();
-    let store = profile_store_major(app_handle);
-    let bundled_matches =
-        bundled_ready && store.is_none_or(|s| bundled_pnpm_major(app_handle) == Some(s));
-
-    if bundled_matches {
-        let node = config::get_node_binary_path(app_handle);
-        return Ok(Some((node, vec![bundled.into_os_string()])));
+    if !bundled.exists() {
+        // 未安装：调用方据此报错并引导下载，而不是静默回落到用户环境。
+        return Ok(None);
     }
-
-    // 用户 pnpm 主版本与 store 一致（或 store 未知）都可直接用。
-    //
-    // Windows 上优先原生 `pnpm.exe`（可直接 CreateProcess）；没有原生 exe 时退回
-    // PATH 里的 `pnpm.cmd`，经 `cmd /c` 执行。二者返回的都是「程序 + 前置参数」，
-    // 调用方无需关心是哪一种。
-    let user_pnpm = user_pnpm_invocation(app_handle);
-    if let Some((program, prefix)) = user_pnpm {
-        let matches = match store {
-            None => true,
-            Some(store) => {
-                pnpm_major_version_at_bounded(
-                    &program,
-                    Some(&config::get_node_binary_path(app_handle)),
-                    None,
-                    super::process::new_process_owner(),
-                )
-                .await?
-                    == Some(store)
-            }
-        };
-        if matches {
-            return Ok(Some((program, prefix)));
-        }
-    }
-    // 都不匹配：退回捆绑版尽力一试（pnpm 会因 store 不兼容失败，由调用方记录）
-    if bundled_ready {
-        let node = config::get_node_binary_path(app_handle);
-        return Ok(Some((node, vec![bundled.into_os_string()])));
-    }
-    Ok(None)
+    let node = config::get_node_binary_path(app_handle);
+    Ok(Some((node, vec![bundled.into_os_string()])))
 }
 
 
-
-/// 构造 `cmd /c <shim>` 的整行参数。
-///
-/// cmd 会把 `/c` 之后的整行重新解析一遍，所以路径必须整体加引号，否则带空格的
-/// 安装路径（`C:\Program Files\...`）会在空格处被拆成两条命令。
-#[cfg(windows)]
-fn cmd_c_line(shim: &Path) -> OsString {
-    let mut line = OsString::from("/c \"");
-    line.push(shim.as_os_str());
-    line.push("\"");
-    line
-}
-
-/// 用户 pnpm 的可执行调用形态：程序路径 + 需要前置的参数。
-///
-/// Windows 上 `.cmd` 不是可执行映像，必须以 `cmd /c` 拉起；原生 `pnpm.exe` 则可
-/// 直接执行。把这段差异收在这里，调用方只拿到「程序 + 参数」。
-#[cfg(windows)]
-fn user_pnpm_invocation(app_handle: &AppHandle) -> Option<(PathBuf, Vec<OsString>)> {
-    if let Some(exe) = cli::find_user_pnpm_executable(app_handle) {
-        return Some((exe, Vec::new()));
-    }
-    let shim = cli::find_user_pnpm(app_handle)?;
-    // `cmd /c` 之后的整行由 cmd 自己重新解析，所以路径必须包成**一个**带引号的
-    // 词，否则 `C:\Program Files\...` 会在空格处被拆开。这里只放 shim 本身，
-    // 后续参数由调用方按普通 argv 追加，cmd 会原样透传给 pnpm。
-    let command_line = cmd_c_line(&shim);
-    let interpreter =
-        PathBuf::from(std::env::var_os("COMSPEC").unwrap_or_else(|| OsString::from("cmd.exe")));
-    Some((interpreter, vec![command_line]))
-}
-
-#[cfg(not(windows))]
-fn user_pnpm_invocation(app_handle: &AppHandle) -> Option<(PathBuf, Vec<OsString>)> {
-    cli::find_user_pnpm(app_handle).map(|pnpm| (pnpm, Vec::new()))
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
-
-    #[cfg(windows)]
-    #[test]
-    fn cmd_line_quotes_a_shim_path_with_spaces() {
-        // cmd 会重新解析 /c 之后的整行：不加引号时空格会把路径截断。
-        let shim = Path::new(concat!("C:\\Program", " ", "Files\\nodejs\\pnpm.cmd"));
-        let line = cmd_c_line(shim);
-        let text = line.to_string_lossy();
-        assert!(text.starts_with("/c \""), "{text}");
-        assert!(text.ends_with('\"'), "{text}");
-        assert!(text.contains("Program Files"), "{text}");
-    }
 
     fn preset(id: &str, package: Option<&str>) -> PreinstallPluginInfo {
         PreinstallPluginInfo {

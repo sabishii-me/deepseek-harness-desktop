@@ -203,14 +203,20 @@ pub fn get_local_node_path() -> Option<PathBuf> {
 /// 原生模块 ABI 探测结论：本地 Node 无法加载活动核心的原生模块时，本进程内
 /// 强制改用捆绑运行时。
 ///
-/// 由 `service::core::runtime::prepare_active_runtime` 在拉起 dsh 之前探测并设置：
-/// 原生模块的 ABI 在构建期确定（预打包核心由 pkg 构建期的 Node 决定），而本地 Node
-/// 只按 semver 挑选，可能与其不匹配（issue #441：Node 25 的 ABI 141 加载 ABI 137 的
-/// `fs_ext.node`）。置位后所有 node 解析（服务进程、`DSH_NODE` 注入、运行环境展示）
-/// 统一走捆绑运行时，避免各处各选一个运行时。
-static PREFER_BUNDLED_NODE_RUNTIME: AtomicBool = AtomicBool::new(false);
+/// 是否优先使用随包分发的运行时。
+///
+/// 默认 true：桌面端**不接管用户系统的 node**。原因有三条，任何一条都足以定下这个默认：
+/// 1. 用户机器上可能根本没有 node（全新 Windows），此时必需用我们自己的；
+/// 2. 版本不一致时行为不可预测——原生模块的 ABI 在构建期固定（预打包核心由 pkg 构建期
+///    的 Node 决定），本地 Node 只按 semver 挑选，可能与其不匹配（issue #441：Node 25 的
+///    ABI 141 加载 ABI 137 的 `fs_ext.node`）；
+/// 3. 用户明确不希望应用去用或污染系统环境。
+///
+/// 置位后所有 node 解析（服务进程、`DSH_NODE` 注入、运行环境展示）统一走捆绑运行时，
+/// 避免各处各选一个。
+static PREFER_BUNDLED_NODE_RUNTIME: AtomicBool = AtomicBool::new(true);
 
-/// 是否因原生模块 ABI 不匹配而强制使用捆绑运行时
+/// 是否优先使用捆绑运行时（默认是）
 pub fn prefer_bundled_node_runtime() -> bool {
     PREFER_BUNDLED_NODE_RUNTIME.load(Ordering::Relaxed)
 }

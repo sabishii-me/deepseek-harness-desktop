@@ -76,9 +76,9 @@ impl Installable for Nodejs {
         config::get_node_install_path(app)
     }
     fn check_installed(&self, app: &AppHandle) -> bool {
-        // 原生模块 ABI 探测已判定本地 node 无法加载核心的原生模块（issue #441）：
-        // 此时不能再以"本机有版本兼容的 node"为由跳过捆绑运行时，否则服务进程仍会
-        // 用那个 ABI 不匹配的运行时启动。
+        // 默认（也永远）走捆绑运行时：不接管用户系统的 node。这样既保证全新机器
+        // （无 node）能跑，也避免版本不一致带来的原生模块 ABI 不匹配（issue #441）。
+        // 判定仍要求运行时可兼容——否则已下载的捆绑版也会被当作“已安装”。
         if config::prefer_bundled_node_runtime() {
             return config::bundled_node_binary(app).is_some()
                 && config::is_runtime_compatible(app);
@@ -156,20 +156,17 @@ impl Installable for Pnpm {
         config::get_pnpm_install_path(app)
     }
     fn check_installed(&self, app: &AppHandle) -> bool {
-        pnpm_ready(
-            config::get_pnpm_binary_path(app).exists(),
-            crate::service::cli::find_user_pnpm(app).is_some(),
-        )
+        pnpm_ready(config::get_pnpm_binary_path(app).exists())
     }
     fn record_mapping(&self, app: &AppHandle) {
-        let managed = config::get_pnpm_install_path(app);
-        let bundled_present = config::get_pnpm_binary_path(app).exists();
-        // 捆绑版优先（`dsh plugin` 需要可校验的 pnpm）：只有捆绑版缺失、且系统确有
-        // 用户 pnpm 时才把该依赖记为「系统环境满足」；两者都缺失时不写，等下载后记录。
-        if bundled_present {
-            config::dependencies::record(app, InstallKind::Pnpm.dependency_key(), Some(managed));
-        } else if crate::service::cli::find_user_pnpm(app).is_some() {
-            config::dependencies::record(app, InstallKind::Pnpm.dependency_key(), None);
+        // 只记录托管根：pnpm 一律用随包分发的那个，不存在「系统环境满足」这种状态。
+        // 捆绑版缺失时不写，等下载完成后由同一路径记录。
+        if config::get_pnpm_binary_path(app).exists() {
+            config::dependencies::record(
+                app,
+                InstallKind::Pnpm.dependency_key(),
+                Some(config::get_pnpm_install_path(app)),
+            );
         }
     }
 }
@@ -218,25 +215,17 @@ impl Installable for Git {
     }
 }
 
-/// pnpm 是否可用：捆绑版优先，其次用户版。
+/// pnpm 是否可用。
 ///
-/// 判定标准是「能不能跑」，不是「文件在不在」。早先只要 PATH 里找得到 pnpm 就跳过
-/// 捆绑版，结果在只有 `pnpm.cmd` 的机器上直接创建进程会失败（Windows 不能执行
-/// `.cmd`），而同一台机器的修复流程又只认原生 `pnpm.exe`——两处判定不一致，最终
-/// 表现为插件装不上、且没有任何可用的 pnpm 兜底。捆绑版是纯 JS 发行包、由我们自己
-/// 的 node 运行，因此只要它已就位就以它为准。
+/// 只用**随包分发**的 pnpm：它是纯 JS 发行包，由我们自己的 node 运行，行为与版本完全
+/// 由我们决定。与 node 同理，接用用户系统的 pnpm 意味着：
+/// - 用户机器可能根本没装（全新 Windows）；
+/// - 版本与档案 store 布局不一致时会硬失败（已有 `store_mismatch` 诊断就来自这里）；
+/// - 用户明确不希望应用去用或污染系统环境。
 ///
-/// 没有用户 pnpm 时返回 false，调用方据此下载捆绑版——这是「用户什么都没装」也能
-/// 走通的保证。
-fn pnpm_ready(bundled_present: bool, user_present: bool) -> bool {
-    if bundled_present {
-        return true;
-    }
-    if user_present {
-        log::info!("Detected user-installed pnpm, skipping bundled pnpm");
-        return true;
-    }
-    false
+/// 返回 false 时调用方下载捆绑版——这是「用户什么都没装」也能走通的保证。
+fn pnpm_ready(bundled_present: bool) -> bool {
+    bundled_present
 }
 
 #[cfg(test)]
@@ -244,20 +233,9 @@ mod tests {
     use super::pnpm_ready;
 
     #[test]
-    fn the_bundled_pnpm_wins_whenever_it_is_present() {
-        // 我们自己的 node 运行纯 JS 发行包，是唯一不依赖用户环境的选择。
-        assert!(pnpm_ready(true, false));
-        assert!(pnpm_ready(true, true));
-    }
-
-    #[test]
-    fn a_user_pnpm_still_counts_but_only_as_a_fallback() {
-        assert!(pnpm_ready(false, true));
-    }
-
-    #[test]
-    fn nothing_installed_means_download_the_bundled_one() {
-        // 全新机器（无 node、无 pnpm）必须走到下载分支，否则插件永远装不上。
-        assert!(!pnpm_ready(false, false));
+    fn only_the_bundled_pnpm_counts() {
+        // 不接用系统 pnpm：版本与 store 布局由我们决定，行为可预测。
+        assert!(pnpm_ready(true));
+        assert!(!pnpm_ready(false));
     }
 }

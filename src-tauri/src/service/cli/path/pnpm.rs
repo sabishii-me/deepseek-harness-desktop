@@ -19,14 +19,6 @@ pub fn find_user_pnpm(app_handle: &AppHandle) -> Option<PathBuf> {
     find_pnpm_in_dirs(&get_bin_dir(app_handle), &dirs)
 }
 
-/// Windows 直接创建进程时不能执行 `.cmd`/`.bat`；为无需 shell 的修复流程单独
-/// 查找原生 `pnpm.exe`，不改变常规 shim 对 `.cmd` 的既有优先级。
-#[cfg(windows)]
-pub(crate) fn find_user_pnpm_executable(app_handle: &AppHandle) -> Option<PathBuf> {
-    let dirs = user_pnpm_dirs(app_handle);
-    find_windows_executable_pnpm_in_dirs(&get_bin_dir(app_handle), &dirs)
-}
-
 fn user_pnpm_dirs(_app_handle: &AppHandle) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> =
         std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
@@ -100,11 +92,6 @@ fn find_pnpm_in_dirs(bin_dir: &Path, dirs: &[PathBuf]) -> Option<PathBuf> {
         &["pnpm"]
     };
     find_pnpm_candidates_in_dirs(bin_dir, dirs, candidates)
-}
-
-#[cfg(windows)]
-fn find_windows_executable_pnpm_in_dirs(bin_dir: &Path, dirs: &[PathBuf]) -> Option<PathBuf> {
-    find_pnpm_candidates_in_dirs(bin_dir, dirs, &["pnpm.exe"])
 }
 
 fn find_pnpm_candidates_in_dirs(
@@ -219,10 +206,6 @@ mod tests {
         assert_eq!(
             find_pnpm_in_dirs(&desktop_bin, std::slice::from_ref(&user_bin)),
             Some(pnpm_env_path(&cmd))
-        );
-        assert_eq!(
-            find_windows_executable_pnpm_in_dirs(&desktop_bin, std::slice::from_ref(&user_bin)),
-            Some(pnpm_env_path(&exe))
         );
         let _ = std::fs::remove_dir_all(root);
     }
