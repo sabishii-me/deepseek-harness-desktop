@@ -223,6 +223,23 @@ pub(super) async fn ensure_plugin_entry_built(
     envs: &HashMap<String, String>,
     window: &WebviewWindow,
 ) -> Result<(), String> {
+    ensure_plugin_entry_built_with(app_handle, id, pkg_dir, envs, window, false).await
+}
+
+/// [`ensure_plugin_entry_built`] 的完整形态。
+///
+/// `bundled = true` 表示这是随安装包分发的内置插件（`link:` 到应用资源）：它的
+/// 产物在打包时就该存在，缺失说明**打包出了错**。现场重建既无意义，也会把问题
+/// 藏起来（重建可能碰巧成功，于是坏包被当作正常安装）——下一次冷启动才发现。
+/// 因此直接报打包错误，引导重装应用。
+pub(super) async fn ensure_plugin_entry_built_with(
+    app_handle: &AppHandle,
+    id: &str,
+    pkg_dir: &Path,
+    envs: &HashMap<String, String>,
+    window: &WebviewWindow,
+    bundled: bool,
+) -> Result<(), String> {
     if !pkg_dir.is_dir() {
         return Err(format!(
             "PLUGIN_ENTRY_MISSING: {id} 未安装（{} 不存在），请重新安装",
@@ -236,6 +253,13 @@ pub(super) async fn ensure_plugin_entry_built(
     };
     if entry.is_file() {
         return Ok(());
+    }
+
+    if bundled {
+        return Err(format!(
+            "PLUGIN_ENTRY_MISSING: {id} 随包分发但缺少声明入口 {}（打包错误，请重新安装应用）",
+            entry.display()
+        ));
     }
 
     // 与 verify 修复路径同一套 store 主版本感知 pnpm 选择（捆绑版优先，不匹配

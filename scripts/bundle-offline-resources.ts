@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { gunzipSync } from 'node:zlib'
 import { pruneDeployment } from './build-plugins'
 
 const repo = resolve(import.meta.dirname, '..')
@@ -22,42 +24,120 @@ for (const retired of [
 ])
   rmSync(join(modules, retired), { recursive: true, force: true })
 
-// Shisa: single source (sabishii-me/dsh-model-provider-shisa) shipped as a built-in
-// so its client code is always present and can contribute its onboarding step. The
-// same source is also installable from its GitHub Release when it is NOT built in;
-// this only controls how the copy reaches the profile, never where the logic lives.
-const shisaSource = process.env.DSH_SHISA_SOURCE
-  ? resolve(process.env.DSH_SHISA_SOURCE)
-  : resolve(repo, '../dsh-model-provider-shisa')
-if (existsSync(join(shisaSource, 'package.json'))) {
-  const shisaTarget = join(modules, '@sabishii-me/dsh-model-provider-shisa')
-  mkdirSync(shisaTarget, { recursive: true })
-  const shisaManifest = JSON.parse(readFileSync(join(shisaSource, 'package.json'), 'utf8'))
-  // Ship exactly what the package declares plus nothing build-time-only.
-  for (const entry of ['dist', 'src/generated', 'cordis.patch.yml', 'LICENSE', 'README.md']) {
-    const from = join(shisaSource, entry)
-    if (existsSync(from))
-      cpSync(from, join(shisaTarget, entry), { recursive: true })
+// Packages we publish ourselves are taken from their own release artifacts at
+// build time, never from a checked-out working tree. A working tree can carry
+// stale or missing build output — a package shipped without `dist` installs fine
+// and then fails on first launch with a missing entry — and the release asset is
+// exactly what someone installing the package separately would get.
+//
+// Set DSH_SHISA_SOURCE / DSH_JOUZU_BRIDGE_SOURCE to a directory to iterate
+// locally instead; the declared entry must exist either way.
+const OWN_PACKAGES = [
+  {
+    repo: 'sabishii-me/dsh-model-provider-shisa',
+    tag: 'v0.1.0',
+    asset: 'sabishii-me-dsh-model-provider-shisa-0.1.0.tgz',
+    target: '@sabishii-me/dsh-model-provider-shisa',
+    entry: 'dist/provider.js',
+    sourceEnv: 'DSH_SHISA_SOURCE',
+  },
+  {
+    repo: 'sabishii-me/dsh-jouzu-bridge',
+    tag: 'v0.1.0',
+    asset: 'sabishii-me-dsh-jouzu-bridge-0.1.0.tgz',
+    target: '@sabishii-me/dsh-jouzu-bridge',
+    entry: 'dist/index.js',
+    sourceEnv: 'DSH_JOUZU_BRIDGE_SOURCE',
+  },
+]
+
+const cache = join(repo, '.artifacts-cache')
+
+/**
+ * Extract a gzipped tar into `dest`.
+ *
+ * Minimal on purpose: npm pack output is a flat, well-formed archive with regular
+ * files and directories. Only those two entry types are honoured; symlinks and
+ * device nodes are ignored rather than guessed at.
+ */
+function extractTgz(archive, dest) {
+  const buffer = gunzipSync(readFileSync(archive))
+  let offset = 0
+  while (offset + 512 <= buffer.length) {
+    const header = buffer.subarray(offset, offset + 512)
+    // Two consecutive zero blocks terminate the archive; a zero name means the end.
+    if (header.every(byte => byte === 0))
+      break
+    const name = header.subarray(0, 100).toString('utf8').replace(/\0.*$/s, '')
+    const sizeField = header.subarray(124, 136).toString('utf8').replace(/\0.*$/s, '').trim()
+    const size = Number.parseInt(sizeField, 8) || 0
+    const type = String.fromCharCode(header[156] || 48)
+    const body = buffer.subarray(offset + 512, offset + 512 + size)
+    offset += 512 + Math.ceil(size / 512) * 512
+    if (name === '')
+      continue
+    // Refuse traversal: npm pack never emits these, so seeing one means a bad archive.
+    const relative = name.replace(/^\.\//, '')
+    if (relative.startsWith('/') || relative.split('/').includes('..'))
+      throw new Error(`refusing unsafe archive entry: ${name}`)
+    const output = join(dest, relative)
+    if (type === '5') {
+      mkdirSync(output, { recursive: true })
+      continue
+    }
+    if (type !== '0' && type !== '\0')
+      continue
+    mkdirSync(dirname(output), { recursive: true })
+    writeFileSync(output, body)
   }
-  writeFileSync(join(shisaTarget, 'package.json'), JSON.stringify(shisaManifest, null, 2))
-  console.log('Bundled built-in model provider from single source:', shisaSource)
-}
-else {
-  console.warn('Shisa build source not found; built-in model provider omitted:', shisaSource)
 }
 
-// Jouzu bridge: an independently released package built from its own repo.
-// It is installed into the profile so the kernel loader import resolves.
-const jouzuBridgeSource = process.env.DSH_JOUZU_BRIDGE_SOURCE
-  ? resolve(process.env.DSH_JOUZU_BRIDGE_SOURCE)
-  : resolve(repo, '../dsh-jouzu-bridge')
-if (!existsSync(join(jouzuBridgeSource, 'package.json')))
-  throw new Error(`Jouzu bridge source not found: ${jouzuBridgeSource}`)
-const jouzuBridgeTarget = join(modules, '@sabishii-me/dsh-jouzu-bridge')
-mkdirSync(jouzuBridgeTarget, { recursive: true })
-for (const entry of ['dist', 'package.json', 'README.md', 'LICENSE'])
-  if (existsSync(join(jouzuBridgeSource, entry)))
-    cpSync(join(jouzuBridgeSource, entry), join(jouzuBridgeTarget, entry), { recursive: true })
+/**
+ * Materialize one of our packages into the resource tree.
+ *
+ * Local directory when its env var is set, otherwise the release tarball. The
+ * declared entry is checked afterwards: shipping a package whose entry cannot
+ * exist is a build error, not a first-launch surprise.
+ */
+function bundleOwnPackage(spec) {
+  const target = join(modules, spec.target)
+  rmSync(target, { recursive: true, force: true })
+  mkdirSync(target, { recursive: true })
+
+  const local = process.env[spec.sourceEnv]
+  if (local !== undefined && local !== '') {
+    const from = resolve(local)
+    cpSync(from, target, { recursive: true, dereference: true })
+    console.log(`Bundled ${spec.target} from local source: ${from}`)
+  }
+  else {
+    mkdirSync(cache, { recursive: true })
+    const archive = join(cache, spec.asset)
+    if (!existsSync(archive)) {
+      const url = `https://github.com/${spec.repo}/releases/download/${spec.tag}/${spec.asset}`
+      // curl rather than a library: the build already shells out elsewhere, and a
+      // plain download keeps the fetch auditable.
+      execFileSync('curl', ['-sSL', '--fail', '-o', archive, url], { stdio: 'inherit' })
+    }
+    // npm packs under a single `package/` prefix; strip exactly that level.
+    // Extracted in-process: the system `tar` on Windows misreads drive-letter paths
+    // and would need POSIX translation, and a tgz reader is a handful of lines.
+    const staging = join(cache, `${spec.asset}.d`)
+    rmSync(staging, { recursive: true, force: true })
+    mkdirSync(staging, { recursive: true })
+    extractTgz(archive, staging)
+    cpSync(join(staging, 'package'), target, { recursive: true, dereference: true })
+    rmSync(staging, { recursive: true, force: true })
+    console.log(`Bundled ${spec.target} from ${spec.repo}@${spec.tag}`)
+  }
+
+  if (!existsSync(join(target, spec.entry)))
+    throw new Error(`${spec.target} is missing its declared entry ${spec.entry}`)
+}
+
+for (const spec of OWN_PACKAGES)
+  bundleOwnPackage(spec)
+
 cpSync(join(repo, 'packages/dsh-tauri-kernel/dist'), join(modules, 'dsh-tauri-kernel/dist'), { recursive: true })
 // The kernel loads the Jouzu model bridge through the profile loader
 // (`ctx.loader.import('<pkg>/model-bridge')`), which resolves from the PROFILE's

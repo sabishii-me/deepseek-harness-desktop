@@ -41,7 +41,7 @@ use crate::service::profile::{
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::Path;
-use tauri::{AppHandle, Emitter, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 // plugin 兄弟模块的再导出：子模块经 `super::` 统一从这里取，跨模块边界只在此定义。
 pub(crate) use super::ensure_profile_npmrc;
@@ -81,7 +81,7 @@ pub use single::{remove_many, update_many};
 pub use diagnose::{IncompatibleVersion, PolicyBlockedVersion};
 
 use allowlist::{add_allow_build_keys, parse_allowlist_keys};
-use artifact::{ensure_plugin_entry_built, verify_installed_products};
+use artifact::{ensure_plugin_entry_built, ensure_plugin_entry_built_with, verify_installed_products};
 use diagnose::{
     diagnostic_suffix, git_transport_hint, incompatible_versions, network_error_hint,
     pick_error_message, policy_blocked_versions, policy_verification_network_failure,
@@ -613,13 +613,30 @@ async fn install_with_cancel(
     // 静默进入下一次启动；包目录按预设的 `installed_name` 解析（scoped 插件
     // 与 id 不同名），失败跨插件聚合后一次性返回，前端可一并重试。
     let mut entry_errors = Vec::new();
+    // 随包分发的插件（link: 到应用资源目录）产物应在打包时生成；缺失是打包错误，
+    // 不尝试现场重建——见 `ensure_plugin_entry_built_with`。
+    let resources_root = app_handle
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|dir| dir.join("resources/node_modules"));
     for target in targets {
         let Some(name) = target.name.as_deref() else {
             continue;
         };
         let pkg_dir = profile_dir(app_handle).join("node_modules").join(name);
-        if let Err(e) =
-            ensure_plugin_entry_built(app_handle, &target.id, &pkg_dir, &envs, &window).await
+        let bundled = resources_root
+            .as_ref()
+            .is_some_and(|root| root.join(name).is_dir());
+        if let Err(e) = ensure_plugin_entry_built_with(
+            app_handle,
+            &target.id,
+            &pkg_dir,
+            &envs,
+            &window,
+            bundled,
+        )
+        .await
         {
             if let Err(err) = errors::record(app_handle, &target.id, "install", &e) {
                 log::warn!("failed to record plugin error for {}: {err}", target.id);
