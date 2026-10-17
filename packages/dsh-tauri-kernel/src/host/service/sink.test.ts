@@ -390,6 +390,32 @@ describe('real official cross-step native sink', () => {
     expect(current.state.signal.aborted).toBe(false)
   })
 
+  it('commits a real tool whose result carries presentationMeta through the real pipeline', async () => {
+    // End-to-end through the real ToolRuntime: the tool itself declares
+    // `presentationMeta`, so the official append carries real meta data.
+    context.tools.register({
+      name: 'meta_writer',
+      description: 'writes something and presents a private diff payload',
+      parameters: { type: 'object', additionalProperties: true },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: String(value) }],
+        presentationMeta: () => ({ operation: 'write', diffs: [] }),
+      },
+      async execute() { return 'meta-writer-output' },
+    })
+    const current = await exchange()
+    nativeCall(current.state.native, 'meta-real', '{}', 'meta_writer')
+    current.state.native.toolEnd('meta-real', 'meta-writer-output')
+    await execute('meta-real', current.state.signal, {}, 'meta_writer')
+    current.state.tools.get('meta-real')!.step = 1
+    const message = llmModule.createToolResultMessage({ callId: llmModule.ToolCallId('meta-real'), isError: false, content: [{ type: 'text', text: 'meta-writer-output' }] })
+    agent.session.append('tool/result', { turn: 1, step: 1, message, meta: { operation: 'write', diffs: [] } }, { surfaceOp: 'append' })
+    expect(current.state.tools.get('meta-real')!.committed).toBe(true)
+    expect(current.state.signal.aborted).toBe(false)
+    expect(current.state.failure).toBeUndefined()
+  })
+
   it.each(['identical', 'changed'] as const)('rejects a genuinely duplicated official native result append with %s content', async (duplicate) => {
     const current = await exchange()
     nativeCall(current.state.native, 'duplicate-append')
