@@ -33,7 +33,6 @@ use manifest::{
 };
 use materialize::{materialize_links, OfflineLink};
 
-mod app_owned_shisa;
 mod manifest;
 mod materialize;
 
@@ -337,18 +336,9 @@ async fn ensure_scoped(app_handle: &AppHandle) -> Result<(), String> {
         .into_iter()
         .filter(|p| p.internal && !p.unsupported_on(core_version.as_deref()))
         .collect();
-    // 本应用早期写入的悬空 Shisa 资源链接先清：它是幂等的一次性数据修复，与本次
-    // 内置插件配置无关，必须早于 fingerprint 复用早退。通用清理会跳过官方作用域包名，
-    // 它们没有其它自愈路径，残留会让 `dsh plugin install` 解析 bundle 失败。
-    {
-        let profile = profile_dir(app_handle);
-        if let Ok(resources) = app_handle.path().resource_dir() {
-            app_owned_shisa::migrate(&profile, &resources.join("resources"))?;
-        }
-    }
     // 内置插件的运行时依赖也必须在 loader 解析之前就位（否则插件 import 直接
-    // `ERR_MODULE_NOT_FOUND`）；与上的修复一样是幂等的事实校验，不依赖本轮
-    // 是否有插件需要重装，因此早于 fingerprint 复用早退。
+    // `ERR_MODULE_NOT_FOUND`）；幂等的事实校验，不依赖本轮是否有插件需要重装，
+    // 因此早于 fingerprint 复用早退。
     ensure_runtime_dependencies(app_handle)?;
     // 同一次启动的两路调用：后到的一路输入未变、且前一路刚成功，直接复用结论，
     // 连下面的失效链接清理、可写性预检与 loader 状态修复一起跳过（issue #766）。
@@ -364,7 +354,6 @@ async fn ensure_scoped(app_handle: &AppHandle) -> Result<(), String> {
         );
         return Ok(());
     }
-    let profile = profile_dir(app_handle);
     prune_dangling_link_deps(app_handle, &internal);
     if internal.is_empty() {
         return Ok(());
