@@ -32,7 +32,16 @@ for (const retired of [
 //
 // Set DSH_SHISA_SOURCE / DSH_JOUZU_BRIDGE_SOURCE to a directory to iterate
 // locally instead; the declared entry must exist either way.
-const OWN_PACKAGES = [
+interface OwnPackage {
+  repo: string
+  tag: string
+  asset: string
+  target: string
+  entry: string
+  sourceEnv: string
+}
+
+const OWN_PACKAGES: OwnPackage[] = [
   {
     repo: 'sabishii-me/dsh-model-provider-shisa',
     tag: 'v0.1.0',
@@ -60,7 +69,7 @@ const cache = join(repo, '.artifacts-cache')
  * files and directories. Only those two entry types are honoured; symlinks and
  * device nodes are ignored rather than guessed at.
  */
-function extractTgz(archive, dest) {
+function extractTgz(archive: string, dest: string): void {
   const buffer = gunzipSync(readFileSync(archive))
   let offset = 0
   while (offset + 512 <= buffer.length) {
@@ -99,7 +108,7 @@ function extractTgz(archive, dest) {
  * declared entry is checked afterwards: shipping a package whose entry cannot
  * exist is a build error, not a first-launch surprise.
  */
-function bundleOwnPackage(spec) {
+function bundleOwnPackage(spec: OwnPackage): void {
   const target = join(modules, spec.target)
   rmSync(target, { recursive: true, force: true })
   mkdirSync(target, { recursive: true })
