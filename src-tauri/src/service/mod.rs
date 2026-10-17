@@ -5,6 +5,7 @@ pub mod data_dir;
 pub mod download;
 pub mod fs_guard;
 pub mod kernel;
+pub mod onboarding;
 pub mod migrate;
 pub(crate) mod patch;
 pub mod perm;

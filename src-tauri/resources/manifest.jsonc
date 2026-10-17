@@ -288,6 +288,38 @@
       "probe": { "args": ["pi", "--help"], "expect": "rpc" }
     }
   ],
+  // 首次启动引导的步骤声明。壳层只认通用动作类型（plugin-selection /
+  // native-kernel / remote-call），不认识任何具体产品：不配置某一步，那一步
+  // 就不存在。remote-call 的 namespace、方法名、完成判定字段全部从这里读，
+  // 宿主代码里没有对应字面量。
+  "onboarding": {
+    "steps": [
+      {
+        "id": "plugins",
+        "kind": "plugin-selection",
+        "title": "preinstall.title",
+        "optional": true
+      },
+      {
+        "id": "kernel",
+        "kind": "native-kernel",
+        "title": "preinstall.title_kernel",
+        "optional": true
+      },
+      {
+        "id": "model",
+        "kind": "remote-call",
+        "title": "preinstall.title_model",
+        "optional": true,
+        "remote": {
+          "namespace": "shisa",
+          "state": "getState",
+          "signIn": "signIn",
+          "ready": { "path": "phase", "equals": "ready" }
+        }
+      }
+    ]
+  },
   "pets": {
     "built-in": [
       {

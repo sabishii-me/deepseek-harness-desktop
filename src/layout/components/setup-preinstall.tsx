@@ -256,6 +256,9 @@ export function PreinstallSetup() {
   // 本轮提交的失败明细（管理器以 ok:false 表达失败，不抛异常）
   const [failures, setFailures] = useState<string[]>([])
 
+  // 当前步骤完全由清单配置决定：不配置某一步，这里就没有那一步。
+  const currentStep = preinstall.currentStep()
+
   const approvals = manager.pendingApprovals
   const incompatibleApprovals = approvals.filter(process => process.refusal?.kind === 'incompatible')
   const policyApprovals = approvals.filter(process => process.refusal?.kind !== 'incompatible')
@@ -264,6 +267,7 @@ export function PreinstallSetup() {
   useMount(() => {
     void store.preinstall.load()
     void store.preinstall.loadKernels()
+    void store.preinstall.loadOnboarding()
   })
 
   // dsh plugin 进程输出经 `preinstall-log` 回流；卸载即注销，不残留监听
@@ -335,14 +339,17 @@ export function PreinstallSetup() {
       setFailures(failed)
       return
     }
-    // 插件装完进入可选的「安装内核」步骤；清单未声明任何内核时直接收尾，
-    // 不展示空步骤。
-    await store.preinstall.loadKernels()
-    if (store.preinstall.kernels.length > 0) {
-      store.preinstall.nextStep()
+    // 标记本步完成：后端按清单推进到下一个未完成步骤；没有更多步骤时
+    // 引导自然结束，界面据此收尾。步骤有哪些完全由配置决定。
+    const step = store.preinstall.currentStep()
+    if (step === null) {
+      await store.preinstall.finish()
       return
     }
-    await store.preinstall.finish()
+    await store.preinstall.completeStep(step.id)
+    await store.preinstall.refreshOnboarding()
+    if (store.preinstall.onboarding?.current === null || store.preinstall.onboarding === null)
+      await store.preinstall.finish()
   }
 
   function handleSkip() {
@@ -400,17 +407,17 @@ export function PreinstallSetup() {
       <div className="flex w-[min(880px,92vw)] flex-col gap-4">
         <header className="flex flex-col items-center gap-1 text-center">
           <Typography type="h4" className="!text-ink">
-            {preinstall.step === 'kernel' ? t('preinstall.title_kernel') : t('preinstall.title')}
+            {t(currentStep?.title ?? 'preinstall.title')}
           </Typography>
           <Typography color="muted" type="body-sm" className="max-w-[440px]">
-            {preinstall.step === 'kernel' ? t('preinstall.step_kernel_subtitle') : t('preinstall.step_plugins_subtitle')}
+            {t(`preinstall.step_${currentStep?.kind ?? 'plugin-selection'}_subtitle`)}
           </Typography>
         </header>
 
-        <If cond={preinstall.step === 'kernel'}>
+        <If cond={currentStep?.kind === 'native-kernel'}>
           <KernelStep installing={installing} />
         </If>
-        <If cond={preinstall.step === 'plugins'}>
+        <If cond={currentStep?.kind === 'plugin-selection'}>
         <If
           cond={installing}
           else={(

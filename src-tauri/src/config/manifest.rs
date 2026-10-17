@@ -25,6 +25,9 @@ pub struct Manifest {
     /// 可选原生内核的托管安装描述（数据驱动、无产品名硬编码）。
     /// 壳层只把它当作数据读取并转发给界面；哪个内核是哪个包由清单声明。
     pub kernels: Vec<KernelSpec>,
+    /// 首次启动引导的步骤声明。壳层只认通用动作类型，不配置则无此步骤。
+    #[serde(default)]
+    pub onboarding: crate::config::onboarding::OnboardingSection,
 }
 
 /// 一个可选原生内核的托管安装描述。

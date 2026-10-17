@@ -1,5 +1,5 @@
 import type { UnlistenFn } from '@tauri-apps/api/event'
-import type { IncompatibleVersion, PolicyBlockedVersion, PreinstallKernel, PreinstallLogPayload, PreinstallPlugin, PreinstallSelection, PreinstallStep } from './types'
+import type { IncompatibleVersion, OnboardingStep, OnboardingView, PolicyBlockedVersion, PreinstallKernel, PreinstallLogPayload, PreinstallPlugin, PreinstallSelection } from './types'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import i18next from 'i18next'
@@ -50,8 +50,11 @@ export const preinstall = defineStore({
     loadError: '',
     /** 是否为首次安装引导（决定默认勾选策略）：boot 流程进入时为 true，侧边栏手动打开为 false */
     isFirstTime: true,
-    /** 当前引导步骤（固定顺序：插件 → 内核） */
-    step: 'plugins' as PreinstallStep,
+    /**
+     * 引导配置（来自清单 `onboarding.steps`）：决定有哪些步骤、顺序与各自动作类型。
+     * 这里不预设步骤名——不配置某一步，那一步就不存在。
+     */
+    onboarding: null as OnboardingView | null,
     /** 清单声明的可选内核及托管状态 */
     kernels: [] as PreinstallKernel[],
     /** 正在安装的内核 id（null = 未进行） */
@@ -124,16 +127,69 @@ export const preinstall = defineStore({
       }
     },
 
-    /** 进入下一步（插件 → 内核） */
-    nextStep() {
-      if (this.step === 'plugins')
-        this.step = 'kernel'
+    /** 当前步骤（配置里第一个未完成的）；没有步骤时为 null。 */
+    currentStep(): OnboardingStep | null {
+      const view = this.onboarding
+      if (view === null)
+        return null
+      const id = view.current
+      return id === null ? null : view.steps.find(step => step.id === id) ?? null
     },
 
-    /** 回退一步 */
-    backStep() {
-      if (this.step === 'kernel')
-        this.step = 'plugins'
+    /**
+     * 回退：清掉上一步的完成标记，让引导回到它。
+     *
+     * 步骤顺序来自配置，不预设名称；已完成的 id 从视图里读，不另存一份。
+     */
+    async backStep(): Promise<void> {
+      const view = this.onboarding
+      if (view === null)
+        return
+      const index = view.steps.findIndex(step => step.id === view.current)
+      if (index <= 0)
+        return
+      const previous = view.steps[index - 1]
+      const remaining = view.steps
+        .filter(step => step.completed && step.id !== previous.id)
+        .map(step => step.id)
+      try {
+        this.onboarding = await invoke<OnboardingView>('reset_onboarding_steps', { ids: remaining })
+      }
+      catch (err) {
+        console.error('[Harness] failed to step back:', err)
+      }
+    },
+
+    /** 重新读一次配置与进度（完成后推进用）。 */
+    async refreshOnboarding(): Promise<OnboardingView | null> {
+      return this.loadOnboarding()
+    },
+
+    /** 拉取引导配置与进度。 */
+    async loadOnboarding(): Promise<OnboardingView | null> {
+      try {
+        this.onboarding = await invoke<OnboardingView>('get_onboarding')
+      }
+      catch (err) {
+        console.error('[Harness] failed to load onboarding:', err)
+        this.onboarding = null
+      }
+      return this.onboarding
+    },
+
+    /**
+     * 标记当前步骤完成并推进。
+     *
+     * 后端按清单校验 id，未知 id 会被拒绝；完成全部步骤后引导自然结束。
+     */
+    async completeStep(id: string): Promise<void> {
+      try {
+        this.onboarding = await invoke<OnboardingView>('complete_onboarding_step', { id })
+      }
+      catch (err) {
+        console.error('[Harness] failed to complete onboarding step:', err)
+        this.error = String(err)
+      }
     },
 
     /** 预装安装日志流：dsh plugin 进程输出逐行追加 */
