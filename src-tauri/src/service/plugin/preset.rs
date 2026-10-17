@@ -524,26 +524,6 @@ pub fn repo_url_of(app_handle: &AppHandle, id: &str) -> Option<String> {
         .map(|p| p.repo_url)
 }
 
-/// FNV-1a 64 位哈希（无外部依赖，跨平台稳定）
-fn fnv1a(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in bytes {
-        hash ^= u64::from(*b);
-        hash = hash.wrapping_mul(0x100_0000_01b3);
-    }
-    hash
-}
-
-/// 当前 `plugins` 节的内容指纹（十六进制 FNV-1a）。
-///
-/// 指纹只覆盖插件节：清单同时承载引擎版本、宠物与依赖映射规范，改宠物不应把用户
-/// 重新拉回首次引导。清单缺失/不可读返回 None。
-pub(crate) fn current_preset_hash(app_handle: &AppHandle) -> Option<String> {
-    let manifest = config::manifest::read(app_handle)?;
-    let canonical = serde_json::to_string(&manifest.plugins).ok()?;
-    Some(format!("{:016x}", fnv1a(canonical.as_bytes())))
-}
-
 /// 是否需要进入首次启动引导。
 ///
 /// 判据完全来自声明式进度：清单里声明了步骤、且尚未全部完成 → 需要。
@@ -993,22 +973,6 @@ mod tests {
             bundled_dep_spec(dir),
             "link:G:/Deepseek Harness Desktop/resources/internal-plugins/dsh-tauri"
         );
-    }
-
-    #[test]
-    fn fnv1a_matches_known_vectors() {
-        // FNV-1a 64-bit 标准测试向量
-        assert_eq!(fnv1a(b""), 0xcbf29ce484222325);
-        assert_eq!(fnv1a(b"a"), 0xaf63dc4c8601ec8c);
-        assert_eq!(fnv1a(b"foobar"), 0x85944171f73967e8);
-    }
-
-    #[test]
-    fn same_content_same_hash_appended_comma_changes_hash() {
-        let a = r#"[{"id":"x","spec":"y","name":"X","description":"","repoUrl":"u"}]"#;
-        let b = r#"[{"id":"x","spec":"y","name":"X","description":"","repoUrl":"u"},]"#;
-        assert_eq!(fnv1a(a.as_bytes()), fnv1a(a.as_bytes()));
-        assert_ne!(fnv1a(a.as_bytes()), fnv1a(b.as_bytes()));
     }
 
     #[test]

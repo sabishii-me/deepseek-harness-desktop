@@ -156,12 +156,10 @@ impl Installable for Pnpm {
         config::get_pnpm_install_path(app)
     }
     fn check_installed(&self, app: &AppHandle) -> bool {
-        // "有则跳过"：用户 PATH 中已有 pnpm 时不再安装捆绑版
-        if crate::service::cli::find_user_pnpm(app).is_some() {
-            log::info!("Detected user-installed pnpm, skipping bundled pnpm");
-            return true;
-        }
-        config::get_pnpm_binary_path(app).exists()
+        pnpm_ready(
+            config::get_pnpm_binary_path(app).exists(),
+            crate::service::cli::find_user_pnpm(app).is_some(),
+        )
     }
     fn record_mapping(&self, app: &AppHandle) {
         let managed = config::get_pnpm_install_path(app);
@@ -217,5 +215,49 @@ impl Installable for Git {
             InstallKind::Git.dependency_key(),
             (!system).then_some(managed),
         );
+    }
+}
+
+/// pnpm 是否可用：捆绑版优先，其次用户版。
+///
+/// 判定标准是「能不能跑」，不是「文件在不在」。早先只要 PATH 里找得到 pnpm 就跳过
+/// 捆绑版，结果在只有 `pnpm.cmd` 的机器上直接创建进程会失败（Windows 不能执行
+/// `.cmd`），而同一台机器的修复流程又只认原生 `pnpm.exe`——两处判定不一致，最终
+/// 表现为插件装不上、且没有任何可用的 pnpm 兜底。捆绑版是纯 JS 发行包、由我们自己
+/// 的 node 运行，因此只要它已就位就以它为准。
+///
+/// 没有用户 pnpm 时返回 false，调用方据此下载捆绑版——这是「用户什么都没装」也能
+/// 走通的保证。
+fn pnpm_ready(bundled_present: bool, user_present: bool) -> bool {
+    if bundled_present {
+        return true;
+    }
+    if user_present {
+        log::info!("Detected user-installed pnpm, skipping bundled pnpm");
+        return true;
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pnpm_ready;
+
+    #[test]
+    fn the_bundled_pnpm_wins_whenever_it_is_present() {
+        // 我们自己的 node 运行纯 JS 发行包，是唯一不依赖用户环境的选择。
+        assert!(pnpm_ready(true, false));
+        assert!(pnpm_ready(true, true));
+    }
+
+    #[test]
+    fn a_user_pnpm_still_counts_but_only_as_a_fallback() {
+        assert!(pnpm_ready(false, true));
+    }
+
+    #[test]
+    fn nothing_installed_means_download_the_bundled_one() {
+        // 全新机器（无 node、无 pnpm）必须走到下载分支，否则插件永远装不上。
+        assert!(!pnpm_ready(false, false));
     }
 }

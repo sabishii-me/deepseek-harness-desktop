@@ -449,6 +449,17 @@ async fn install_with_cancel(
     )
     .await?;
 
+    // 里程碑：整批安装开始。界面据此把「正在安装」从等待态切成进行态，
+    // 不必解析 pnpm 的具体输出行。
+    let _ = window.emit(
+        PREINSTALL_LOG_EVENT,
+        PreinstallLogPayload {
+            line: format!("[harness] 开始安装 {} 个插件", targets.len()),
+            target: None,
+            phase: Some(crate::service::plugin::process::LogPhase::Start),
+        },
+    );
+
     let (exit_code, last_output, last_attempt) =
         if exit_code != 0 && heal_locked_release_age(&profile_path, &last_attempt) {
             run_plugin_install_with_transient_retry(
@@ -524,6 +535,15 @@ async fn install_with_cancel(
         } else {
             pick_error_message(&last_output, hint)
         };
+        // 里程碑：整批安装失败。
+        let _ = window.emit(
+            PREINSTALL_LOG_EVENT,
+            PreinstallLogPayload {
+                line: format!("[harness] 安装失败：{message}"),
+                target: None,
+                phase: Some(crate::service::plugin::process::LogPhase::Fail),
+            },
+        );
         // 批量安装失败时给本次选中的每个插件记一条错误（前端据此展示异常标记，
         // 可针对单个插件重试更新/卸载）
         for target in targets {
