@@ -225,6 +225,13 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
     && appearanceTranslucent(appearance)
   const bootCss = translucent ? appearanceBootCss(appearance) : ''
   const post = useIframePost(iframeRef)
+
+  // 壳层引导结束（或重新打开）时同步给帧内：只在 onLoad 推的话，帧已加载完、
+  // 不会再触发 onLoad，帧内就会一直沿用旧值。
+  const flowPending = useStore(store.preinstall)?.flowPending === true
+  useWatch([flowPending], () => {
+    post({ type: 'dsh://onboarding:allow', allow: !flowPending })
+  })
   // 握手兜底：帧内接收器异常时不能让 iframe 永久藏住，超时后按「未确认」直接揭开。
   const appearancePending = translucent && bootFrame !== frameKey
   const iframeHidden = appearancePending || remoteLoading || harness.showIframeError
@@ -624,6 +631,12 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
             store.harness.markIframeLoaded()
             if (remoteMode)
               setLoadedUrl(srcOverride)
+            // 告诉帧内：此刻是否仍处于壳层全屏引导。帧内据此决定要不要再弹自己的
+            // onboarding 步骤——同一段时间里只该有一套引导。引导结束后再推一次。
+            post({
+              type: 'dsh://onboarding:allow',
+              allow: !store.preinstall.flowPending,
+            })
           }}
           onError={store.harness.markIframeError}
           title={t('app.open_editor')}

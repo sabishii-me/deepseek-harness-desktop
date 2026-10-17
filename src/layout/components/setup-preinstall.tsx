@@ -1,9 +1,9 @@
 import type { IconComponent } from './loadable'
 import type { PluginProcess } from '@/store/modules/plugins'
-import type { PreinstallPlugin } from '@/store/modules/preinstall'
+import type { OnboardingStep, PreinstallPlugin } from '@/store/modules/preinstall'
 import { ArrowUpRightFromSquare, ArrowUturnCcwLeft, Comments, Copy, Cubes3Overlap, LayoutSideContentLeft, PlugConnection, ShoppingCart, Xmark } from '@gravity-ui/icons'
 import { Button, Card, Checkbox, Chip, ScrollShadow, Spinner, Switch, Typography } from '@heroui/react'
-import { useMount } from '@reause/core'
+import { useIntervalFn, useMount } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -240,6 +240,94 @@ function KernelStep({ installing }: { installing: boolean }) {
   )
 }
 
+/**
+ * `remote-call` 步骤：发起授权并等待配置里声明的完成条件成立。
+ *
+ * 界面不知道对方是什么服务——命名空间、方法名、判定字段全部来自步骤配置。
+ * 这里只做三件事：显示等待状态、按需发起授权、轮询完成条件。
+ */
+function RemoteCallStep({ step, installing }: { step: OnboardingStep, installing: boolean }) {
+  const { t } = useTranslation()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  // 轮询完成条件：服务端判定，界面不自作主张比对字段。
+  useIntervalFn(() => {
+    if (busy) return
+    void (async () => {
+      try {
+        const done = await invoke<boolean>('probe_onboarding_remote', { id: step.id })
+        if (done) {
+          await store.preinstall.completeStep(step.id)
+          await store.preinstall.refreshOnboarding()
+          if (store.preinstall.onboarding?.finished === true)
+            await store.preinstall.finish()
+        }
+      }
+      catch (err) {
+        // 传输失败不能当作「未完成」静默重试：显示出来，用户才知道发生了什么。
+        setError(String(err))
+      }
+    })()
+  }, 2000)
+
+  async function startSignIn() {
+    setBusy(true)
+    setError('')
+    try {
+      await invoke('sign_in_onboarding_remote', { id: step.id })
+    }
+    catch (err) {
+      setError(String(err))
+    }
+    finally {
+      setBusy(false)
+    }
+  }
+
+  const canSignIn = step.remote?.signIn !== undefined
+
+  return (
+    <div className="flex flex-col gap-3">
+      <Card className="flex items-center justify-between gap-3 bg-panel2 p-4 shadow-none">
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <span className="truncate text-[13px] font-medium text-ink">{t(step.title)}</span>
+          <span className="truncate text-[11px] text-muted">
+            {busy ? t('preinstall.remote_waiting') : t('preinstall.remote_idle')}
+          </span>
+        </div>
+        <If cond={canSignIn}>
+          <Button
+            size="sm"
+            variant="primary"
+            className="h-8 shrink-0"
+            isDisabled={busy || installing}
+            onPress={() => { void startSignIn() }}
+          >
+            {busy ? t('preinstall.remote_signing_in') : t('preinstall.remote_sign_in')}
+          </Button>
+        </If>
+      </Card>
+      {error !== '' && (
+        <div className="flex flex-col gap-1 rounded-md border border-danger/30 bg-danger/5 p-3">
+          <p className="text-xs font-medium text-danger">{t('preinstall.remote_failed')}</p>
+          <p className="max-h-[120px] overflow-y-auto break-all font-mono text-[11px] text-muted">{error}</p>
+        </div>
+      )}
+      <div className="flex items-center justify-between gap-2">
+        <Button className="h-8" size="sm" variant="tertiary" isDisabled={busy || installing} onPress={() => { void store.preinstall.backStep() }}>
+          {t('preinstall.back')}
+        </Button>
+        <If cond={step.optional}>
+          <Button className="h-8" size="sm" variant="tertiary" isDisabled={busy || installing} onPress={() => { void store.preinstall.completeStep(step.id) }}>
+            {t('preinstall.skip')}
+          </Button>
+        </If>
+      </div>
+    </div>
+  )
+}
+
 export function PreinstallSetup() {
   const { t } = useTranslation()
   const preinstall = useStore(store.preinstall)
@@ -416,6 +504,9 @@ export function PreinstallSetup() {
 
         <If cond={currentStep?.kind === 'native-kernel'}>
           <KernelStep installing={installing} />
+        </If>
+        <If cond={currentStep !== null && currentStep.kind === 'remote-call'}>
+          <RemoteCallStep step={currentStep as OnboardingStep} installing={installing} />
         </If>
         <If cond={currentStep?.kind === 'plugin-selection'}>
         <If

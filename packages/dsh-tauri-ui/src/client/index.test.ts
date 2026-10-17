@@ -18,6 +18,7 @@ vi.mock('./register/obstructions', () => ({ registerSettingsObstructions: vi.fn(
 vi.mock('./register/sections', () => ({ registerSettingsSections: vi.fn() }))
 vi.mock('./register/settings', () => ({ registerSettings: vi.fn() }))
 vi.mock('./register/settings-open', () => ({ registerSettingsOpen: vi.fn() }))
+vi.mock('./register/onboarding-allow', () => ({ registerOnboardingAllow: vi.fn() }))
 vi.mock('./register/styles', () => ({ registerStyles: vi.fn() }))
 vi.mock('./utils/style', () => ({}))
 vi.mock('./utils/cssr', () => ({}))
@@ -35,8 +36,9 @@ describe('ui client settings effect registration', () => {
     apply({ effect } as unknown as Parameters<typeof apply>[0])
 
     expect(effect).toHaveBeenCalledWith(registerSettings, 'dsh-tauri-ui: settings panel')
-    expect(effect).toHaveBeenCalledTimes(13)
+    expect(effect).toHaveBeenCalledTimes(14)
     expect(effect).toHaveBeenCalledWith(registerContinueNotice, 'dsh-tauri-ui: continue notice')
+    expect(effect).toHaveBeenCalledWith(expect.any(Function), 'dsh-tauri-ui: onboarding allow')
     expect(effect).toHaveBeenCalledWith(expect.any(Function), 'dsh-tauri-ui: styles')
     expect(effect.mock.calls.some(([, name]) => name.includes('mobile'))).toBe(false)
   })

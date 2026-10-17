@@ -44,7 +44,7 @@ function isMainViewRetained(session: RetainedSessionLike): boolean {
 
 export function SettingsTrigger({ wide, useSessions }: SettingsTriggerProps): ReactElement {
   const { open, launcherAvailable, launcherShortcut } = useStore(store.settings)
-  const { onboarding } = useStore(store.sections)
+  const { onboarding, allowOnboarding } = useStore(store.sections)
   const [completed, setCompleted] = useState<string[]>([])
 
   const onboardingActive = useSessions((state) => {
@@ -59,7 +59,13 @@ export function SettingsTrigger({ wide, useSessions }: SettingsTriggerProps): Re
   if (!onboardingActive && completed.length > 0)
     setCompleted([])
 
-  const step = onboardingActive ? onboarding.find(s => !completed.includes(s.id)) : undefined
+  // 壳层全屏引导进行中时不在这里再渲染步骤：那段时间界面已被覆盖，
+  // 弹出只会和壳层抢注意力。壳层结束后该开关打开，步骤行为恢复原状。
+  const step = !allowOnboarding
+    ? undefined
+    : onboardingActive
+      ? onboarding.find(s => !completed.includes(s.id))
+      : undefined
 
   const completeStep = useCallback((id: string) => {
     setCompleted(previous => uniq([...previous, id]))

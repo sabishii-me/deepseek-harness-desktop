@@ -198,10 +198,10 @@ export function Webview() {
    */
   useWatch([status], () => {
     if (status === 'ready')
-      void store.preinstall.loadOnboarding()
+      void store.preinstall?.loadOnboarding()
   })
 
-  const showFlow = status === 'ready' && preinstall.flowPending
+  const showFlow = status === 'ready' && preinstall?.flowPending === true
 
   const bridge = live
     ? {

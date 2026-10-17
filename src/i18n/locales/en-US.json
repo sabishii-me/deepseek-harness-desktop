@@ -695,5 +695,16 @@
   "network.test_timeout": "No response from the proxy: the request timed out",
   "network.test_connect": "Could not connect to the proxy. Check the address and port.",
   "network.test_status": "Proxy reachable, but the update source returned {{status}}",
-  "network.test_failed": "Proxy test failed"
+  "network.test_failed": "Proxy test failed",
+  "preinstall": {
+    "title_model": "Connect a model",
+    "step_remote-call_subtitle": "Sign in to start using the selected model provider. You can change this later in Settings.",
+    "step_native-kernel_subtitle": "Optionally install a native kernel. You can add or remove one later.",
+    "step_plugin-selection_subtitle": "Pick the plugins to install now. You can manage them later in Settings.",
+    "remote_idle": "Not connected yet",
+    "remote_waiting": "Waiting for authorization…",
+    "remote_signing_in": "Signing in…",
+    "remote_sign_in": "Sign in",
+    "remote_failed": "Sign-in failed"
+  }
 }

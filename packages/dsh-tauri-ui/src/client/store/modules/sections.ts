@@ -8,6 +8,7 @@ export const sections = defineStore({
   state: (): SettingsSectionsState => ({
     rows: NO_ROWS,
     onboarding: NO_ROWS,
+    allowOnboarding: true,
   }),
   actions: {
     setRows(rows: SettingsRow[]) {
@@ -15,6 +16,9 @@ export const sections = defineStore({
     },
     setOnboarding(rows: SettingsRow[]) {
       this.onboarding = rows
+    },
+    setAllowOnboarding(allow: boolean) {
+      this.allowOnboarding = allow
     },
   },
 })
