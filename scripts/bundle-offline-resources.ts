@@ -12,6 +12,15 @@ cpSync(join(repo, 'node_modules/dsh-h3'), join(modules, 'dsh-h3'), { recursive: 
 pruneDeployment(modules, names)
 // Generated core resources from the retired offline design, never user data.
 rmSync(join(resources, 'dsh'), { recursive: true, force: true })
+// Retired packages that used to be bundled here. Removing them keeps a rebuild
+// from carrying a second copy beside their standalone replacements.
+for (const retired of [
+  '@deepseek-ai/dsh-experimental-jouzu-backend',
+  '@deepseek-ai/dsh-experimental-jouzu-ui',
+  '@deepseek-ai/dsh-experimental-shisa-provider',
+  '@deepseek-ai/dsh-experimental-shisa-ui',
+])
+  rmSync(join(modules, retired), { recursive: true, force: true })
 
 // Shisa: single source (sabishii-me/dsh-model-provider-shisa) shipped as a built-in
 // so its client code is always present and can contribute its onboarding step. The
