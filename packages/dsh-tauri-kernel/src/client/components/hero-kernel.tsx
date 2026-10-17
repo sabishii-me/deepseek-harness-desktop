@@ -9,7 +9,7 @@ import { locale } from '../locales'
 import { backendFromIdentity, isBackendAvailable, isForkedIdentity } from '../service/kernel-identity'
 import { kernelContentAvailable } from '../service/kernel-version'
 import { kernelStore } from '../store/modules/kernel-store'
-import { KernelIcon } from './kernel-icon'
+import { KernelIcon, KernelSpinner } from './kernel-icon'
 
 /** Official kernel plus every native kernel, in picker order. */
 const LABELS: Record<BackendId, string> = { dsh: 'DeepSeek Harness', ...KERNEL_LABELS }
@@ -42,9 +42,18 @@ export function HeroKernel(props: HeroKernelProps): ReactElement | null {
   const workspaces = props.useWorkspaces(state => state.items)
   const [expanded, setExpanded] = useState(false)
   const chipRef = useRef<HTMLButtonElement>(null)
+  // 菜单关闭不再挂在 `onSuccess` 上：那要求等会话建好（内核冷启动时可达数十秒），
+  // 期间菜单一直罩着、界面看上去没任何反应。改为在选择的当下同步关闭，
+  // 把等待交给 chip 上的进行中标志（见 §5.7）。
+  //
+  // `pending` 记住用户点的是哪个内核：既有 `backend` 取自**当前会话**的绑定，
+  // 而切换时新会话还没建好，拿它显示会让用户不知道自己点的是哪个。
+  const [pending, setPending] = useState<BackendId | undefined>(undefined)
   const { isLoading, error, executeImmediate } = useAsyncState(props.createSession, undefined, {
     immediate: false,
-    onSuccess: () => setExpanded(false),
+    // 成功与失败都要清掉目标：失败后 chip 应回到真实绑定，而不是停在一个没建成的目标上。
+    onSuccess: () => setPending(undefined),
+    onError: () => setPending(undefined),
   })
   useWatchImmediate([props.sessionId, identity] as const, ([sessionId, value]) => {
     if (sessionId !== undefined && value === undefined)
@@ -95,6 +104,9 @@ export function HeroKernel(props: HeroKernelProps): ReactElement | null {
   function select(id: string): void {
     if (isLoading || store.phase !== 'ready' || !capable || !isNativeBackend(id) || !isBackendAvailable(roster.get(id)))
       return
+    // 先关菜单再做工作：结果未回之前，界面就已经进入「处理中」状态。
+    setExpanded(false)
+    setPending(id)
     const preset = summary?.projectionValues?.agentPreset
     void executeImmediate(id, workspaceId === undefined
       ? summary?.cwd === undefined ? {} : { cwd: summary.cwd }
@@ -105,6 +117,7 @@ export function HeroKernel(props: HeroKernelProps): ReactElement | null {
     setExpanded(false)
     if (isLoading || store.phase !== 'ready' || !capable)
       return
+    setPending('dsh')
     const preset = summary?.projectionValues?.agentPreset
     void executeImmediate('dsh', workspaceId === undefined
       ? summary?.cwd === undefined ? {} : { cwd: summary.cwd }
@@ -121,17 +134,21 @@ export function HeroKernel(props: HeroKernelProps): ReactElement | null {
               ref={chipRef}
               variant="seat"
               className={`h-full rounded-none bg-transparent hover:not-disabled:bg-transparent aria-expanded:bg-transparent${clearable ? ' pr-0' : ''}`}
-              icon={<KernelIcon backend={backend} />}
-              chevron={clearable ? undefined : <ChevronDown />}
+              icon={<KernelIcon backend={pending ?? backend} />}
+              // 进行中时在 chevron 位置转圈：图标保留，用户仍知道切的是哪个内核；
+              // 此时菜单已关，chevron 本身也没有意义。优先于 `clearable` 的隐藏。
+              chevron={busy ? <KernelSpinner /> : clearable ? undefined : <ChevronDown />}
               open={expanded}
               disabled={disabled}
-              aria-label={locale.text('kernel.label')}
+              aria-label={busy ? locale.text('kernel.pending') : locale.text('kernel.label')}
               aria-haspopup="menu"
               aria-expanded={expanded}
               title={title}
               onClick={() => setExpanded(current => !current)}
             >
-              {backend === undefined ? awaiting ? locale.text('kernel.pending') : locale.text('kernel.select') : LABELS[backend]}
+              {pending !== undefined
+                ? LABELS[pending]
+                : backend === undefined ? awaiting ? locale.text('kernel.pending') : locale.text('kernel.select') : LABELS[backend]}
             </Chip>
           )}
           items={items}

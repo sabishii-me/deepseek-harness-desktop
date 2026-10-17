@@ -226,7 +226,7 @@ describe('hero kernel picker', () => {
     expect(view.getByRole('button', { name: 'Kernel' }).textContent).toContain('Select kernel')
   })
 
-  it('busy creation disables further selection until it settles', async () => {
+  it('closes the menu as soon as a kernel is picked, then reports progress on the chip', async () => {
     const props = heroProps({ sessionId: 'session-a', identity: null })
     let finish: (() => void) | undefined
     vi.mocked(props.createSession).mockImplementation(() => new Promise<void>((resolve) => {
@@ -235,14 +235,56 @@ describe('hero kernel picker', () => {
     const view = render(<HeroKernel {...props} />)
     fireEvent.click(view.getByRole('button', { name: 'Kernel' }))
     fireEvent.click(view.getByRole('menuitem', { name: 'Codex' }))
-    expect((view.getByRole('button', { name: 'Kernel' }) as HTMLButtonElement).disabled).toBe(true)
-    expect((view.getByRole('menuitem', { name: 'Codex' }) as HTMLButtonElement).disabled).toBe(true)
-    fireEvent.click(view.getByRole('menuitem', { name: 'Codex' }))
+
+    // 菜单立刻收起：等待发生在内核侧（冷启动可达数十秒），菜单罩在那里会让界面
+    // 看上去完全没有反应。
+    expect(view.queryByRole('menu')).toBeNull()
     expect(props.createSession).toHaveBeenCalledOnce()
+
+    // 进行中的信号落在 chip 上：容器带 aria-busy，chip 不可再次触发。
+    const container = view.container.querySelector('[data-bridge-kernel-picker]')
+    expect(container?.getAttribute('aria-busy')).toBe('true')
+    const chip = view.getByRole('button', { name: 'Reading session kernel' }) as HTMLButtonElement
+    expect(chip.disabled).toBe(true)
+    // 转圈只出现在进行中；空闲时该位置是 chevron。
+    expect(container?.querySelector('svg.animate-spin')).not.toBeNull()
+
+    fireEvent.click(chip)
+    expect(props.createSession).toHaveBeenCalledOnce()
+
     if (finish === undefined)
       throw new Error('creation promise was not started')
     await act(async () => finish?.())
-    expect(view.queryByRole('menu')).toBeNull()
+    // 结束后恢复可点，转圈消失。
+    const settled = view.getByRole('button', { name: 'Kernel' }) as HTMLButtonElement
+    expect(settled.disabled).toBe(false)
+    expect(view.container.querySelector('svg.animate-spin')).toBeNull()
+  })
+
+  it('names the kernel being switched to, not the current binding', async () => {
+    // 既有 `backend` 取自当前会话的绑定，切换时新会话还没建好；若直接拿它显示，
+    // 用户点的是 Jouzu，看到的却还是旧的（或空白的）名字。
+    kernelStore.$patch({ backends: kernelStore.$state.backends.map(item => item.id === 'claude' ? { ...item, installed: true, auth: 'ok' } : item) })
+    const props = heroProps({ sessionId: 'session-a', identity: IDENTITY })
+    let finish: (() => void) | undefined
+    vi.mocked(props.createSession).mockImplementation(() => new Promise<void>((resolve) => {
+      finish = resolve
+    }))
+    const view = render(<HeroKernel {...props} />)
+    // 切换前显示当前绑定。
+    expect(view.getByRole('button', { name: 'Kernel' }).textContent).toContain('Codex')
+
+    fireEvent.click(view.getByRole('button', { name: 'Kernel' }))
+    fireEvent.click(view.getByRole('menuitem', { name: 'Claude' }))
+
+    // 切换中：直接说出目标内核，并带进行中标志。
+    const chip = view.getByRole('button', { name: 'Reading session kernel' })
+    expect(chip.textContent).toContain('Claude')
+    expect(view.container.querySelector('svg.animate-spin')).not.toBeNull()
+
+    if (finish === undefined)
+      throw new Error('creation promise was not started')
+    await act(async () => finish?.())
   })
 
   it('official Menu keyboard entry and Escape return focus to the Chip anchor', async () => {
