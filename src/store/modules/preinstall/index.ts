@@ -3,6 +3,7 @@ export type { BlockedRefusal } from './store'
 export type {
   IncompatibleVersion,
   OnboardingKind,
+  OnboardingRemoteState,
   OnboardingStep,
   OnboardingView,
   PolicyBlockedVersion,
@@ -11,5 +12,7 @@ export type {
   PreinstallPlugin,
   PreinstallSelection,
   RemoteCallSpec,
-  RemoteReadyRule,
+  RemoteAction,
+  RemoteCondition,
+  RemoteField,
 } from './types'

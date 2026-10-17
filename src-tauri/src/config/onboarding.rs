@@ -38,29 +38,67 @@ pub enum OnboardingKind {
     RemoteCall,
 }
 
-/// `remote-call` 步骤的完成判定：读 `payload[path]`，等于 `equals` 即完成。
+/// 一次字段比较：从结果对象里取 `path` 指向的单层字段，与 `equals` 比较。
 ///
-/// 宿主不认识 `path` 指向什么字段，也不认识 `equals` 的取值含义——两者都来自配置。
+/// 宿主不知道这个字段表示什么、取值有什么含义——它只做相等比较。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RemoteReadyRule {
-    /// 响应结果中的字段路径（当前只支持单层字段名）。
+pub struct RemoteCondition {
+    /// 单层字段名。
     pub path: String,
-    /// 判定为完成时的取值。
+    /// 比较目标。
     pub equals: String,
 }
 
-/// `remote-call` 步骤调用的 Remote 方法与判定规则。
+/// 卡片正文的一行。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteField {
+    /// 何时显示；缺省 = 总是显示。
+    #[serde(default)]
+    pub show_when: Option<RemoteCondition>,
+    /// 取哪个字段。
+    pub path: String,
+    /// 行首文案的 i18n key；缺省时只显示值。
+    #[serde(default)]
+    pub label: Option<String>,
+    /// 是否附带「复制」按钮（用于授权链接这类值）。
+    #[serde(default)]
+    pub copy: bool,
+}
+
+/// 卡片内的一颗按钮。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteAction {
+    /// 何时显示；缺省 = 总是显示。
+    #[serde(default)]
+    pub show_when: Option<RemoteCondition>,
+    /// 点击时调用的 Remote 方法名（本步骤 `namespace` 下）。
+    pub method: String,
+    /// 按钮文案的 i18n key。
+    pub label: String,
+}
+
+/// `remote-call` 步骤的完整描述。
+///
+/// 宿主只执行三条原语：**取值**（`read`）→ **比较**（`done` / `showWhen`）→ **渲染**
+/// （`fields`）或 **调用**（`actions`）。它不理解任何具体业务状态，因此换一个
+/// provider（OAuth 设备授权、轮询某种就绪标志、……）只需改配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteCallSpec {
-    /// Remote 命名空间，如 `shisa`。宿主只当作字符串透传。
+    /// Remote 命名空间，纯字符串透传。
     pub namespace: String,
-    /// 读取状态的方法名。
-    pub state: String,
-    /// 发起授权的方法名；缺省表示该步骤不可主动发起（只等待状态达成）。
+    /// 读取状态的 Remote 方法名。
+    pub read: String,
+    /// 完成判定：比较为真即本步完成。
+    pub done: RemoteCondition,
+    /// 卡片正文行，按顺序渲染。
     #[serde(default)]
-    pub sign_in: Option<String>,
-    /// 完成判定。
-    pub ready: RemoteReadyRule,
+    pub fields: Vec<RemoteField>,
+    /// 卡片内按钮。
+    #[serde(default)]
+    pub actions: Vec<RemoteAction>,
+    /// 轮询间隔（毫秒）；缺省 1500。
+    #[serde(default)]
+    pub poll_ms: Option<u64>,
 }
 
 /// 清单 `onboarding.steps` 里的一项。
@@ -124,17 +162,26 @@ impl OnboardingState {
     /// 按配置判断是否全部完成，并在完成时写入结束时间。
     ///
     /// `now` 由调用方提供（便于测试）；已记录结束时间则保持不变。
+    /// 按配置判定是否全部完成，并在完成时记录结束时间。
+    ///
+    /// `finished_at` 只是**历史记录**（引导何时走完），不参与「需不需要引导」的判断。
+    /// 判据永远是步骤集合：新增步骤后即使旧时间戳还在，新步骤也是待办。把时间戳
+    /// 当成开关会让「加步骤」永远影响不了已跑完引导的用户。
     pub fn settle(&mut self, section: &OnboardingSection, now: &str) {
-        if self.finished_at.is_some() {
-            return;
-        }
         // 未配置任何步骤时不算「已完成引导」：没有步骤就没有引导，避免把空配置
-        // 误记成「用户已经走过一遍」，导致以后新增步骤时不再展示。
+        // 误记成「用户已经走过一遍」。
         if section.steps.is_empty() {
             return;
         }
         if section.steps.iter().all(|step| self.is_completed(&step.id)) {
-            self.finished_at = Some(now.to_string());
+            // 保留首次时间戳；重新完成时不覆盖。
+            if self.finished_at.is_none() {
+                self.finished_at = Some(now.to_string());
+            }
+        }
+        else {
+            // 有未完成步骤（典型：配置新增了一步）→ 清掉时间戳，与事实一致。
+            self.finished_at = None;
         }
     }
 
@@ -262,8 +309,7 @@ mod tests {
 
     #[test]
     fn a_new_step_makes_a_finished_state_pending_again() {
-        // 这是「加步骤不改代码」的核心保证：已完成的旧进度遇到新配置时，
-        // 新步骤自然处于未完成态。
+        // 这是「加步骤不改代码」的核心保证：新增步骤后，旧时间戳不能把它隐住。
         let mut state = OnboardingState {
             version: STATE_VERSION,
             completed: vec!["plugins".to_string()],
@@ -271,9 +317,13 @@ mod tests {
         };
         let wider = section(&["plugins", "kernel"]);
         assert!(!wider.steps.iter().all(|step| state.is_completed(&step.id)));
-        // 已记录结束时间时不再改写；删除完成标记才是「重新引导」的手段。
         state.settle(&wider, "new");
-        assert_eq!(state.finished_at.as_deref(), Some("old"));
+        // 仍有未完成步骤 → 时间戳必须清掉，否则界面会认为引导已结束。
+        assert_eq!(state.finished_at, None);
+        // 补上后再次收尾，时间戳恢复。
+        state.complete("kernel");
+        state.settle(&wider, "newer");
+        assert_eq!(state.finished_at.as_deref(), Some("newer"));
     }
 
     #[test]

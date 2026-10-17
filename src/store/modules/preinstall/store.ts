@@ -172,17 +172,28 @@ export const preinstall = defineStore({
       return this.loadOnboarding()
     },
 
+    /**
+     * 由视图派生「还要不要压引导层」。
+     *
+     * 必须与 `onboarding` 同步更新：只在加载时算一次的话，完成最后一步后视图已
+     * finished、flowPending 却仍是 true，壳层会渲染一个所有步骤内容都不再存在的
+     * 空引导页（无按钮、只有标题）。
+     */
+    syncFlow(view: OnboardingView | null): void {
+      this.flowPending = view !== null && view.steps.length > 0 && !view.finished
+    },
+
     /** 拉取引导配置与进度。 */
     async loadOnboarding(): Promise<OnboardingView | null> {
       try {
         this.onboarding = await invoke<OnboardingView>('get_onboarding')
         // 有声明步骤且尚未完成 → 引导层要压住界面；没有任何步骤 → 不打扰用户。
-        this.flowPending = this.onboarding.steps.length > 0 && !this.onboarding.finished
+        this.syncFlow(this.onboarding)
       }
       catch (err) {
         console.error('[Harness] failed to load onboarding:', err)
         this.onboarding = null
-        this.flowPending = false
+        this.syncFlow(null)
       }
       return this.onboarding
     },
@@ -195,11 +206,31 @@ export const preinstall = defineStore({
     async completeStep(id: string): Promise<void> {
       try {
         this.onboarding = await invoke<OnboardingView>('complete_onboarding_step', { id })
+        this.syncFlow(this.onboarding)
       }
       catch (err) {
         console.error('[Harness] failed to complete onboarding step:', err)
         this.error = String(err)
       }
+    },
+
+    /**
+     * 完成当前步骤并推进：全部步骤完成时才收尾（拉起服务），否则停在下一步。
+     *
+     * 每个步骤的「继续」都走这里——早先内核步骤直接调 finish()，于是它之后的
+     * 步骤永远不会渲染，进度却被一次性标成全部完成。
+     */
+    async advance(): Promise<void> {
+      const step = this.currentStep()
+      console.debug('[onboarding] advance', { step: step?.id ?? null, current: this.onboarding?.current ?? null, finished: this.onboarding?.finished })
+      if (step === null) {
+        await this.finish()
+        return
+      }
+      await this.completeStep(step.id)
+      console.debug('[onboarding] after complete', { current: this.onboarding?.current ?? null, finished: this.onboarding?.finished, flowPending: this.flowPending })
+      if (this.onboarding === null || this.onboarding.current === null)
+        await this.finish()
     },
 
     /** 预装安装日志流：dsh plugin 进程输出逐行追加 */
@@ -333,27 +364,43 @@ export const preinstall = defineStore({
       }
     },
 
-    /** 跳过预装插件引导：记录状态后继续启动服务 */
-    async skip() {
+    /**
+     * 跳过**当前这一步**（不是跳过整个引导）。
+     *
+     * 每个可选步骤都有自己的 Skip：点它只意味着「这一步不配了」，后续步骤照常。
+     * 全部步骤都完成（含被跳过的）时，`advance` 才会收尾并拉起服务。
+     */
+    async skip(): Promise<void> {
       if (this.installing)
         return
-      await this.finish()
+      await this.advance()
     },
 
     /**
-     * 引导收尾：标记引导完成（记录预设指纹）并继续启动服务。
+     * 引导收尾：拉起服务并等待就绪。
      *
-     * 安装由管理器执行（`install_plugin_specs`），不再经过 `install_preinstall_plugins`，
-     * 因此「标记完成」这一步要在这里补上，否则引导页每轮启动都会再次弹出。
+     * 进度已在每个步骤完成/跳过时写入；这里不再改写它——把「收尾」和「标记完成」
+     * 分开，是因为收尾可能在最后一步之后发生，也可能是外部（如启动流程）触发。
      */
     async finish() {
+      // 先撤掉引导层与 preinstall 状态，再等服务就绪。
+      //
+      // 顺序很重要：`continueStartup` 要等到服务健康（数秒到数十秒），这期间如果
+      // 壳层还停在 `status: 'preinstall'`，用户看到的是一个所有步骤内容都已消失的
+      // 空壳——既没有按钮，也无从重试。进度已经写完，界面本来就该切到启动页。
+      this.flowPending = false
+      harness.status = 'starting'
       try {
-        await invoke('skip_preinstall_plugins')
         await this.continueStartup()
       }
       catch (err) {
+        // 收尾失败必须可见：此时进度已写入，但界面还停在引导页，用户会以为卡死。
         console.error('[Harness] finish preinstall failed:', err)
         this.error = String(err)
+        this.pushLog(`[harness] 引导收尾失败：${String(err)}`)
+        // 进度已经是「全部完成」，界面不应继续停在引导页：即使拉起服务失败，
+        // 也把壳层拉出 preinstall，让错误走启动页的重试入口，而不是一个无按钮的空壳。
+        throw err
       }
     },
 

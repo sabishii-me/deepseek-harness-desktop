@@ -12,26 +12,57 @@
 /** 宿主支持的通用步骤动作类型（与 Rust `OnboardingKind` 对齐）。 */
 export type OnboardingKind = 'plugin-selection' | 'native-kernel' | 'remote-call'
 
-/**
- * `remote-call` 步骤的完成判定：读返回值里的 `path` 字段，等于 `equals` 即完成。
- *
- * 壳层不认识 `path` 指向什么字段、也不认识 `equals` 的含义——两者都来自配置。
- */
-export interface RemoteReadyRule {
+/** 一次字段比较：取 `path` 指向的单层字段，与 `equals` 比较（与 Rust `RemoteCondition` 对齐）。 */
+export interface RemoteCondition {
   path: string
   equals: string
 }
 
-/** `remote-call` 步骤调用的 Remote 方法与判定规则（与 Rust `RemoteCallSpec` 对齐）。 */
+/** 卡片正文的一行（与 Rust `RemoteField` 对齐）。 */
+export interface RemoteField {
+  /** 何时显示；缺省 = 总是显示。 */
+  showWhen?: RemoteCondition
+  path: string
+  /** 行首文案的 i18n key；缺省时只显示值。 */
+  label?: string
+  /** 是否附带「复制」按钮。 */
+  copy?: boolean
+}
+
+/** 卡片内的一颗按钮（与 Rust `RemoteAction` 对齐）。 */
+export interface RemoteAction {
+  showWhen?: RemoteCondition
+  /** 点击时调用的 Remote 方法名。 */
+  method: string
+  /** 按钮文案的 i18n key。 */
+  label: string
+}
+
+/**
+ * `remote-call` 步骤描述（与 Rust `RemoteCallSpec` 对齐）。
+ *
+ * 宿主只做：取值（`read`）→ 比较（`done` / `showWhen`）→ 渲染或调用。
+ * 不认识任何具体业务状态。
+ */
 export interface RemoteCallSpec {
-  /** Remote 命名空间，纯字符串透传。 */
   namespace: string
-  /** 读取状态的方法名。 */
-  state: string
-  /** 发起授权的方法名；缺省表示只能等待状态达成，不能主动发起。 */
-  signIn?: string
-  /** 完成判定。 */
-  ready: RemoteReadyRule
+  read: string
+  done: RemoteCondition
+  fields?: RemoteField[]
+  actions?: RemoteAction[]
+  /** 轮询间隔（毫秒），缺省 1500。 */
+  pollMs?: number
+}
+
+/**
+ * 一次 remote 探测的结果（与 Rust `OnboardingRemoteState` 对齐）。
+ *
+ * `state` 是服务端返回值的原样投影：界面从中取展示所需的字段，但**哪个字段表示
+ * 完成**由配置的 `ready.path`/`ready.equals` 决定，不在界面里写死。
+ */
+export interface OnboardingRemoteState {
+  ready: boolean
+  state: Record<string, unknown>
 }
 
 /** 清单声明的一个引导步骤 + 当前完成状态（与 Rust `OnboardingStepView` 对齐）。 */

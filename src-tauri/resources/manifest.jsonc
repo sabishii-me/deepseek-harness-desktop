@@ -1,8 +1,8 @@
 {
   "engines": {
     "dsh": {
-      "recommend": "0.2.1-alpha.2",
-      "minimum": "0.2.1-alpha.2"
+      "recommend": "0.2.1-rc.2",
+      "minimum": "0.2.1-rc.2"
     },
     "node": {
       "version": ">=22.22.0"
@@ -43,8 +43,8 @@
     },
     "dsh": {
       "engine": {
-        "recommend": "0.2.1-alpha.2",
-        "minimum": "0.2.1-alpha.2"
+        "recommend": "0.2.1-rc.2",
+        "minimum": "0.2.1-rc.2"
       },
       "entry": "node_modules/@deepseek-ai/dsh/lib/bin.js",
       "managedRoot": "$AppData/dependencies/dsh",
@@ -311,11 +311,53 @@
         "kind": "remote-call",
         "title": "preinstall.title_model",
         "optional": true,
+        // 全部为数据：宿主只取值、比较、渲染，不认识下面任何取值或方法名的含义。
         "remote": {
           "namespace": "shisa",
-          "state": "getState",
-          "signIn": "signIn",
-          "ready": { "path": "phase", "equals": "ready" }
+          "read": "getState",
+          "pollMs": 1500,
+          "done": { "path": "phase", "equals": "ready" },
+          "fields": [
+            { "path": "organization" },
+            {
+              "showWhen": { "path": "phase", "equals": "waiting" },
+              "path": "code",
+              "label": "preinstall.remote_code"
+            },
+            {
+              "showWhen": { "path": "phase", "equals": "waiting" },
+              "path": "url",
+              "label": "preinstall.remote_link",
+              "copy": true
+            },
+            {
+              "showWhen": { "path": "phase", "equals": "ready" },
+              "path": "modelCount",
+              "label": "preinstall.remote_models"
+            }
+          ],
+          "actions": [
+            {
+              "showWhen": { "path": "phase", "equals": "signed-out" },
+              "method": "signIn",
+              "label": "preinstall.remote_sign_in"
+            },
+            {
+              "showWhen": { "path": "phase", "equals": "waiting" },
+              "method": "cancel",
+              "label": "preinstall.remote_cancel"
+            },
+            {
+              "showWhen": { "path": "phase", "equals": "error" },
+              "method": "signIn",
+              "label": "preinstall.remote_retry"
+            },
+            {
+              "showWhen": { "path": "phase", "equals": "ready" },
+              "method": "signOut",
+              "label": "preinstall.remote_sign_out"
+            }
+          ]
         }
       }
     ]

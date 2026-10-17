@@ -1,47 +1,72 @@
 /**
  * `remote-call` 步骤的通用性测试。
  *
- * 这里全程使用**虚构**的命名空间与方法名：如果实现里漏了任何具体产品的字面量，
+ * 全程使用**虚构**的命名空间、方法与字段名：如果实现里漏了任何具体产品的字面量，
  * 这些用例就会失败。目标不是覆盖某个 provider，而是证明宿主只认配置。
  */
-import type { OnboardingStep } from '@/store/modules/preinstall'
+import type { OnboardingStep, RemoteCallSpec } from '@/store/modules/preinstall'
 import { describe, expect, it } from 'vitest'
 
 /** 构造一个与产品无关的 remote-call 步骤。 */
-function remoteStep(overrides: Partial<OnboardingStep> = {}): OnboardingStep {
+function remoteStep(remote: RemoteCallSpec = genericSpec()): OnboardingStep {
   return {
     id: 'any-step',
     kind: 'remote-call',
     title: 'any.title',
     optional: true,
     completed: false,
-    remote: {
-      namespace: 'example-ns',
-      state: 'readStatus',
-      signIn: 'authorize',
-      ready: { path: 'status', equals: 'granted' },
-    },
-    ...overrides,
+    remote,
   }
 }
 
-describe('remote-call step declaration', () => {
+/** 一份完全虚构的配置：三层状态、两条正文行、两颗按钮。 */
+function genericSpec(): RemoteCallSpec {
+  return {
+    namespace: 'example-ns',
+    read: 'readStatus',
+    done: { path: 'status', equals: 'granted' },
+    pollMs: 2000,
+    fields: [
+      { path: 'owner' },
+      { showWhen: { path: 'status', equals: 'pending' }, path: 'handle', copy: true },
+    ],
+    actions: [
+      { showWhen: { path: 'status', equals: 'idle' }, method: 'begin', label: 'x.begin' },
+      { showWhen: { path: 'status', equals: 'pending' }, method: 'abort', label: 'x.abort' },
+    ],
+  }
+}
+
+describe('remote-call declaration', () => {
   it('carries everything the host needs, so no provider name is compiled in', () => {
     const step = remoteStep()
-    // 界面与执行器只读这些字段；把命名空间换成任意值都不需要改代码。
     expect(step.remote?.namespace).toBe('example-ns')
-    expect(step.remote?.state).toBe('readStatus')
-    expect(step.remote?.ready).toEqual({ path: 'status', equals: 'granted' })
+    expect(step.remote?.read).toBe('readStatus')
+    expect(step.remote?.done).toEqual({ path: 'status', equals: 'granted' })
   })
 
-  it('treats a missing sign-in method as a wait-only step', () => {
-    const step = remoteStep({ remote: { namespace: 'n', state: 's', ready: { path: 'p', equals: 'v' } } })
-    expect(step.remote?.signIn).toBeUndefined()
+  it('works with only the three primitives declared', () => {
+    // 没有 fields / actions 也能跑：宿主只做取值与比较。
+    const step = remoteStep({
+      namespace: 'n',
+      read: 'r',
+      done: { path: 'p', equals: 'v' },
+    })
+    expect(step.remote?.fields).toBeUndefined()
+    expect(step.remote?.actions).toBeUndefined()
+  })
+
+  it('never names a concrete state or field', () => {
+    // 配置里的每一个业务词都由调用方给出，组件不引用任何具体取值。
+    const spec = genericSpec()
+    const words = JSON.stringify(spec)
+    for (const forbidden of ['shisa', 'deepseek', 'oauth', 'waiting', 'signed-out'])
+      expect(words).not.toContain(forbidden)
   })
 
   it('keeps the step skippable only when declared optional', () => {
     expect(remoteStep().optional).toBe(true)
-    expect(remoteStep({ optional: false }).optional).toBe(false)
+    expect({ ...remoteStep(), optional: false }.optional).toBe(false)
   })
 })
 

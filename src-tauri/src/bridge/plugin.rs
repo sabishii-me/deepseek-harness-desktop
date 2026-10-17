@@ -129,15 +129,6 @@ pub async fn allow_plugin_policy_versions(
 }
 
 #[tauri::command]
-pub async fn skip_preinstall_plugins(
-    app_handle: AppHandle,
-    window: WebviewWindow,
-) -> Result<(), String> {
-    let profile = instances::window_profile(&app_handle, window.label());
-    instances::scope(profile, async { Ok(()) }).await
-}
-
-#[tauri::command]
 pub async fn ensure_internal_plugins(
     app_handle: AppHandle,
     window: WebviewWindow,

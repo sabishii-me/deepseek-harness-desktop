@@ -1,11 +1,11 @@
 import type { IconComponent } from './loadable'
 import type { PluginProcess } from '@/store/modules/plugins'
-import type { OnboardingStep, PreinstallPlugin } from '@/store/modules/preinstall'
+import type { OnboardingRemoteState, OnboardingStep, PreinstallPlugin } from '@/store/modules/preinstall'
 import { ArrowUpRightFromSquare, ArrowUturnCcwLeft, Comments, Copy, Cubes3Overlap, LayoutSideContentLeft, PlugConnection, ShoppingCart, Xmark } from '@gravity-ui/icons'
 import { Button, Card, Checkbox, Chip, ScrollShadow, Spinner, Switch, Typography } from '@heroui/react'
 import { useIntervalFn, useMount } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Else, If, Then } from 'react-if-lite'
 import { useStore } from 'valtio-define'
@@ -275,7 +275,7 @@ function KernelStep({ installing }: { installing: boolean }) {
         <Button className="h-8" size="sm" variant="tertiary" isDisabled={busy || installing} onPress={() => store.preinstall.backStep()}>
           {t('preinstall.back')}
         </Button>
-        <Button className="h-8" size="sm" variant="primary" isDisabled={busy || installing} onPress={() => { void store.preinstall.finish() }}>
+        <Button className="h-8" size="sm" variant="primary" isDisabled={busy || installing} onPress={() => { void store.preinstall.advance() }}>
           {t('preinstall.continue')}
         </Button>
       </div>
@@ -284,41 +284,67 @@ function KernelStep({ installing }: { installing: boolean }) {
 }
 
 /**
- * `remote-call` 步骤：发起授权并等待配置里声明的完成条件成立。
+ * `remote-call` 步骤：完全由配置驱动的授权卡片。
  *
- * 界面不知道对方是什么服务——命名空间、方法名、判定字段全部来自步骤配置。
- * 这里只做三件事：显示等待状态、按需发起授权、轮询完成条件。
+ * 宿主只执行三条原语：
+ * 1. **取值** —— 调 `read` 拿回一个对象；
+ * 2. **比较** —— `{ path, equals }` 做字符串相等，用于判定完成与决定显隐；
+ * 3. **渲染 / 调用** —— 按 `fields` 显示正文，按 `actions` 显示按钮并调 `method`。
+ *
+ * 代码里没有任何业务字面量：不知道 `phase`、不知道 `waiting`、不知道哪颗按钮是
+ * 「登录」。换一个 provider（OAuth 设备授权、轮询某种就绪标志、……）只改配置。
  */
 function RemoteCallStep({ step, installing }: { step: OnboardingStep, installing: boolean }) {
   const { t } = useTranslation()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [remote, setRemote] = useState<OnboardingRemoteState | null>(null)
 
-  // 轮询完成条件：服务端判定，界面不自作主张比对字段。
+  const spec = step.remote
+  const readValue = useCallback(
+    (path: string | undefined): unknown => {
+      if (path === undefined || remote === null)
+        return undefined
+      const value = remote.state[path.trim()]
+      return value ?? undefined
+    },
+    [remote],
+  )
+  const visible = useCallback(
+    (showWhen: { path: string, equals: string } | undefined): boolean => {
+      if (showWhen === undefined)
+        return true
+      return readValue(showWhen.path) === showWhen.equals
+    },
+    [readValue],
+  )
+
+  const refresh = useCallback(async () => {
+    if (spec === undefined)
+      return
+    try {
+      setRemote(await invoke<OnboardingRemoteState>('probe_onboarding_remote', { id: step.id }))
+      setError('')
+    }
+    catch (err) {
+      // 传输失败不能当作「未完成」静默重试：显示出来，用户才知道发生了什么。
+      setError(String(err))
+    }
+  }, [spec, step.id])
+
+  useMount(() => { void refresh() })
   useIntervalFn(() => {
-    if (busy) return
-    void (async () => {
-      try {
-        const done = await invoke<boolean>('probe_onboarding_remote', { id: step.id })
-        if (done) {
-          await store.preinstall.completeStep(step.id)
-          await store.preinstall.refreshOnboarding()
-          if (store.preinstall.onboarding?.finished === true)
-            await store.preinstall.finish()
-        }
-      }
-      catch (err) {
-        // 传输失败不能当作「未完成」静默重试：显示出来，用户才知道发生了什么。
-        setError(String(err))
-      }
-    })()
-  }, 2000)
+    if (busy || remote?.ready === true)
+      return
+    void refresh()
+  }, spec?.pollMs ?? 1500)
 
-  async function startSignIn() {
+  const run = useCallback(async (method: string) => {
     setBusy(true)
     setError('')
     try {
-      await invoke('sign_in_onboarding_remote', { id: step.id })
+      await invoke('invoke_onboarding_remote', { id: step.id, method })
+      await refresh()
     }
     catch (err) {
       setError(String(err))
@@ -326,51 +352,78 @@ function RemoteCallStep({ step, installing }: { step: OnboardingStep, installing
     finally {
       setBusy(false)
     }
-  }
+  }, [refresh, step.id])
 
-  const canSignIn = step.remote?.signIn !== undefined
+  const text = (value: unknown): string =>
+    typeof value === 'string' ? value : typeof value === 'number' ? String(value) : ''
 
   return (
     <div className="flex flex-col gap-3">
-      <Card className="flex items-center justify-between gap-3 bg-panel2 p-4 shadow-none">
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <span className="truncate text-[13px] font-medium text-ink">{t(step.title)}</span>
-          <span className="truncate text-[11px] text-muted">
-            {busy ? t('preinstall.remote_waiting') : t('preinstall.remote_idle')}
-          </span>
-        </div>
-        <If cond={canSignIn}>
-          <Button
-            size="sm"
-            variant="primary"
-            className="h-8 shrink-0"
-            isDisabled={busy || installing}
-            onPress={() => { void startSignIn() }}
-          >
-            {busy ? t('preinstall.remote_signing_in') : t('preinstall.remote_sign_in')}
-          </Button>
-        </If>
+      <Card className="flex flex-col gap-3 bg-panel2 p-4 shadow-none">
+        {spec === undefined
+          ? <p className="text-[12px] text-muted">{t('preinstall.remote_unconfigured')}</p>
+          : (
+              <>
+                {(spec.fields ?? []).map(field => (
+                  <If key={field.path} cond={visible(field.showWhen)}>
+                    <div className="flex flex-col gap-1">
+                      {field.label !== undefined && (
+                        <span className="text-[11px] text-muted">{t(field.label)}</span>
+                      )}
+                      <div className="flex items-center gap-2">
+                        <span className="break-all text-[12px] text-ink">{text(readValue(field.path))}</span>
+                        <If cond={field.copy}>
+                          <Button
+                            size="sm"
+                            variant="tertiary"
+                            className="h-7 w-fit shrink-0"
+                            onPress={() => { void navigator.clipboard.writeText(text(readValue(field.path))).catch(() => {}) }}
+                          >
+                            {t('preinstall.remote_copy')}
+                          </Button>
+                        </If>
+                      </div>
+                    </div>
+                  </If>
+                ))}
+                <div className="flex items-center justify-end gap-2">
+                  {(spec.actions ?? []).map(action => (
+                    <If key={action.method + action.label} cond={visible(action.showWhen)}>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="h-8"
+                        isDisabled={busy || installing}
+                        onPress={() => { void run(action.method) }}
+                      >
+                        {t(action.label)}
+                      </Button>
+                    </If>
+                  ))}
+                </div>
+              </>
+            )}
       </Card>
+
       {error !== '' && (
         <div className="flex flex-col gap-1 rounded-md border border-danger/30 bg-danger/5 p-3">
           <p className="text-xs font-medium text-danger">{t('preinstall.remote_failed')}</p>
           <p className="max-h-[120px] overflow-y-auto break-all font-mono text-[11px] text-muted">{error}</p>
         </div>
       )}
+
+      {/* 页面底部：只有导航，没有 Skip。 */}
       <div className="flex items-center justify-between gap-2">
-        <Button className="h-8" size="sm" variant="tertiary" isDisabled={busy || installing} onPress={() => { void store.preinstall.backStep() }}>
+        <Button className="h-8" size="sm" variant="tertiary" isDisabled={busy || installing} onPress={() => store.preinstall.backStep()}>
           {t('preinstall.back')}
         </Button>
-        <If cond={step.optional}>
-          <Button className="h-8" size="sm" variant="tertiary" isDisabled={busy || installing} onPress={() => { void store.preinstall.completeStep(step.id) }}>
-            {t('preinstall.skip')}
-          </Button>
-        </If>
+        <Button className="h-8" size="sm" variant="primary" isDisabled={busy || installing} onPress={() => { void store.preinstall.advance() }}>
+          {t('preinstall.continue')}
+        </Button>
       </div>
     </div>
   )
 }
-
 export function PreinstallSetup() {
   const { t } = useTranslation()
   const preinstall = useStore(store.preinstall)
@@ -398,7 +451,13 @@ export function PreinstallSetup() {
   useMount(() => {
     void store.preinstall.load()
     void store.preinstall.loadKernels()
-    void store.preinstall.loadOnboarding()
+    // 拉完进度后自愈：清单里已无待办（例如上一轮已完成但壳层仍停在
+    // preinstall）时，立即收尾。否则这里会渲染成一个没有任何步骤内容的空壳，
+    // 用户既看不到也点不到。
+    void store.preinstall.loadOnboarding().then((view) => {
+      if (view !== null && view.current === null)
+        void store.preinstall.finish()
+    })
   })
 
   // dsh plugin 进程输出经 `preinstall-log` 回流；卸载即注销，不残留监听
@@ -470,17 +529,8 @@ export function PreinstallSetup() {
       setFailures(failed)
       return
     }
-    // 标记本步完成：后端按清单推进到下一个未完成步骤；没有更多步骤时
-    // 引导自然结束，界面据此收尾。步骤有哪些完全由配置决定。
-    const step = store.preinstall.currentStep()
-    if (step === null) {
-      await store.preinstall.finish()
-      return
-    }
-    await store.preinstall.completeStep(step.id)
-    await store.preinstall.refreshOnboarding()
-    if (store.preinstall.onboarding?.current === null || store.preinstall.onboarding === null)
-      await store.preinstall.finish()
+    // 标记本步完成并推进；全部完成时才收尾。步骤有哪些完全由配置决定。
+    await store.preinstall.advance()
   }
 
   function handleSkip() {
@@ -622,24 +672,20 @@ export function PreinstallSetup() {
                     <p className="text-center text-xs text-muted">{t('preinstall.can_uncheck_hint')}</p>
                   </If>
 
-                  {/* 操作区：有变更 → 弱「跳过」+ 主「确认」；无变更 → 主按钮独占「跳过」，避免重复入口 */}
+                  {/* 操作区：有变更 → 「安装」；无变更 → 「继续」。不提供 Skip：
+                      不想装就把勾选取消，底部自然变回「继续」。 */}
                   <div className="flex items-center justify-end gap-2">
-                    <If cond={hasChanges}>
-                      <Button className="h-8" size="sm" variant="tertiary" data-testid="dsh-setup-preinstall-skip" onPress={handleSkip} isDisabled={installing}>
-                        {t('preinstall.skip')}
-                      </Button>
-                    </If>
                     <If cond={!hasChanges}>
                       <Then>
                         <Button
                           className="h-8"
                           size="sm"
                           variant="primary"
-                          data-testid="dsh-setup-preinstall-skip"
-                          onPress={handleSkip}
+                          data-testid="dsh-setup-preinstall-continue"
+                          onPress={() => { void store.preinstall.advance() }}
                           isDisabled={installing}
                         >
-                          {t('preinstall.skip')}
+                          {t('preinstall.continue')}
                         </Button>
                       </Then>
                       <Else>
@@ -647,6 +693,7 @@ export function PreinstallSetup() {
                           className="h-8"
                           size="sm"
                           variant="primary"
+                          data-testid="dsh-setup-preinstall-install"
                           onPress={handleConfirm}
                           isDisabled={installing}
                         >

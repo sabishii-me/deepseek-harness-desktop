@@ -133,19 +133,36 @@ pub fn reset_onboarding_steps(
 pub async fn probe_onboarding_remote(
     app_handle: AppHandle,
     id: String,
-) -> Result<bool, String> {
+) -> Result<OnboardingRemoteState, String> {
     let (base, spec) = remote_target(&app_handle, &id)?;
-    crate::service::onboarding::remote::probe(&base, "", &spec).await
+    let (value, done) = crate::service::onboarding::remote::read_state(&base, "", &spec).await?;
+    Ok(OnboardingRemoteState {
+        ready: done,
+        // 服务端返回值原样交给界面：字段语义由配置与插件自己解释。
+        state: value,
+    })
 }
 
-/// 为某个 `remote-call` 步骤发起授权动作（配置里声明了 `signIn` 才有）。
+/// 一次 remote 探测的结果：完整状态值 + 是否已满足配置的完成条件。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OnboardingRemoteState {
+    pub ready: bool,
+    pub state: serde_json::Value,
+}
+
+/// 调用某个 `remote-call` 步骤 `actions` 里声明的方法。
+///
+/// 方法名与显示条件都在配置里；本命令不判断它是「登录」还是「退出」，
+/// 只接受该步骤声明过的方法（见 `remote::invoke`）。
 #[tauri::command]
-pub async fn sign_in_onboarding_remote(
+pub async fn invoke_onboarding_remote(
     app_handle: AppHandle,
     id: String,
+    method: String,
 ) -> Result<(), String> {
     let (base, spec) = remote_target(&app_handle, &id)?;
-    crate::service::onboarding::remote::sign_in(&base, "", &spec).await
+    crate::service::onboarding::remote::invoke(&base, "", &spec, &method).await
 }
 
 /// 取出该步骤的 Remote 配置与服务基地址。
@@ -173,7 +190,7 @@ fn remote_target(
 }
 
 /// 当前时间戳（秒精度，UTC）。失败时回落到空串，不影响完成标记本身。
-fn now_rfc3339() -> String {
+pub(crate) fn now_rfc3339() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(elapsed) => format!("{}", elapsed.as_secs()),
@@ -184,7 +201,7 @@ fn now_rfc3339() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::onboarding::{OnboardingSection, RemoteReadyRule};
+    use crate::config::onboarding::{OnboardingSection, RemoteAction, RemoteCondition, RemoteField};
 
     fn step(id: &str) -> OnboardingStep {
         OnboardingStep {
@@ -230,9 +247,23 @@ mod tests {
         // 宿主不解析 namespace/方法名/字段路径的语义，只原样交给界面与执行器。
         let spec = RemoteCallSpec {
             namespace: "any-namespace".to_string(),
-            state: "readState".to_string(),
-            sign_in: Some("authorize".to_string()),
-            ready: RemoteReadyRule { path: "state".to_string(), equals: "ok".to_string() },
+            read: "readState".to_string(),
+            done: RemoteCondition { path: "state".to_string(), equals: "ok".to_string() },
+            fields: vec![RemoteField {
+                show_when: None,
+                path: "organisation".to_string(),
+                label: None,
+                copy: false,
+            }],
+            actions: vec![RemoteAction {
+                show_when: Some(RemoteCondition {
+                    path: "state".to_string(),
+                    equals: "signed-out".to_string(),
+                }),
+                method: "authorize".to_string(),
+                label: "preinstall.remote_sign_in".to_string(),
+            }],
+            poll_ms: None,
         };
         let steps = vec![OnboardingStep {
             id: "model".to_string(),

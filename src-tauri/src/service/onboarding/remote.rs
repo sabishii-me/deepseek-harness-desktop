@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::config::onboarding::{RemoteCallSpec, RemoteReadyRule};
+use crate::config::onboarding::{RemoteCallSpec, RemoteCondition};
 
 /// 单次 RPC 的超时：状态轮询要快，发起授权只等请求本身（授权在后台继续）。
 const RPC_TIMEOUT: Duration = Duration::from_secs(20);
@@ -55,10 +55,11 @@ pub fn endpoint_of(namespace: &str, method: &str) -> Result<String, String> {
     Ok(format!("{namespace}/{method}"))
 }
 
-/// 按配置的 `path` 取字段并和 `equals` 比较。
+/// 按配置的 `path` 取字段与 `equals` 比较。
 ///
-/// `path` 目前只支持单层字段名；缺失或类型不符都视为「未完成」，不猜测。
-pub fn ready(rule: &RemoteReadyRule, value: &Value) -> bool {
+/// 这是宿主唯一的「判断」原语：它不知道字段表示什么，只做字符串相等比较。
+/// `path` 目前只支持单层字段名；字段缺失或不是字符串都视为不匹配，不猜测。
+pub fn matches(rule: &RemoteCondition, value: &Value) -> bool {
     value
         .get(rule.path.trim())
         .and_then(Value::as_str)
@@ -144,30 +145,40 @@ pub async fn call(
     Ok(parse_response(&body))
 }
 
-/// 读一次状态并按配置判定是否完成。
+/// 读一次状态：返回服务端原始值 + 是否已满足完成条件。
 ///
-/// 返回 `Ok(true)` 表示该步骤已完成；`Ok(false)` 表示仍需等待/操作；
-/// `Err` 是传输或契约错误（调用方据此显示可读错误，而不是当作未完成）。
-pub async fn probe(
+/// 界面需要整个对象才能渲染配置声明的正文行（验证码、授权链接都在里面）；
+/// 字段语义仍由配置决定，这里不解释任何业务字段。
+pub async fn read_state(
     base: &str,
     token: &str,
     spec: &RemoteCallSpec,
-) -> Result<bool, String> {
-    match call(base, token, &spec.namespace, &spec.state).await? {
-        RemoteOutcome::Value(value) => Ok(ready(&spec.ready, &value)),
+) -> Result<(Value, bool), String> {
+    match call(base, token, &spec.namespace, &spec.read).await? {
+        RemoteOutcome::Value(value) => {
+            let done = matches(&spec.done, &value);
+            Ok((value, done))
+        }
         RemoteOutcome::Failure(message) => Err(message),
     }
 }
 
-/// 发起授权动作（若配置了 `sign_in` 方法）。
-pub async fn sign_in(
+/// 调用该步骤 `namespace` 下的任意方法（`actions[].method` 或 `read`）。
+///
+/// 方法名完全来自配置：宿主不判断它是「登录」还是「退出」，只负责调用。
+/// 只接受本步骤声明过的方法，避免界面凭此调用任意 Remote。
+pub async fn invoke(
     base: &str,
     token: &str,
     spec: &RemoteCallSpec,
+    method: &str,
 ) -> Result<(), String> {
-    let Some(method) = spec.sign_in.as_deref() else {
-        return Err("ONBOARDING_REMOTE_NO_SIGN_IN".to_string());
-    };
+    let declared = method == spec.read
+        || spec.fields.iter().any(|_| false)
+        || spec.actions.iter().any(|action| action.method == method);
+    if !declared {
+        return Err(format!("ONBOARDING_REMOTE_METHOD_NOT_DECLARED: {method}"));
+    }
     match call(base, token, &spec.namespace, method).await? {
         RemoteOutcome::Value(_) => Ok(()),
         RemoteOutcome::Failure(message) => Err(message),
@@ -195,8 +206,8 @@ fn rpc_id() -> String {
 mod tests {
     use super::*;
 
-    fn rule(path: &str, equals: &str) -> RemoteReadyRule {
-        RemoteReadyRule { path: path.to_string(), equals: equals.to_string() }
+    fn rule(path: &str, equals: &str) -> RemoteCondition {
+        RemoteCondition { path: path.to_string(), equals: equals.to_string() }
     }
 
     #[test]
@@ -230,16 +241,16 @@ mod tests {
     #[test]
     fn ready_matches_the_configured_field_only() {
         let value = json!({ "phase": "done", "other": "done" });
-        assert!(ready(&rule("phase", "done"), &value));
-        assert!(!ready(&rule("phase", "waiting"), &value));
-        assert!(!ready(&rule("missing", "done"), &value));
+        assert!(matches(&rule("phase", "done"), &value));
+        assert!(!matches(&rule("phase", "waiting"), &value));
+        assert!(!matches(&rule("missing", "done"), &value));
     }
 
     #[test]
     fn ready_never_guesses_on_wrong_types() {
         let value = json!({ "count": 3, "flag": true });
-        assert!(!ready(&rule("count", "3"), &value));
-        assert!(!ready(&rule("flag", "true"), &value));
+        assert!(!matches(&rule("count", "3"), &value));
+        assert!(!matches(&rule("flag", "true"), &value));
     }
 
     #[test]
