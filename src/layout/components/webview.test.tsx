@@ -11,13 +11,14 @@ const mocks = vi.hoisted(() => ({
   setShortcuts: vi.fn(),
   harness: { status: 'ready', serviceHealthy: true, serviceRunning: true, iframeKey: 0, iframeLoaded: false, iframeAlive: false, iframeError: false, startupPhase: 'process-boot', busyAction: null },
   recovery: { recovery: { required: false } },
+  preinstall: { flowPending: false, loadOnboarding: vi.fn() },
 }))
 
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ label: 'window-2' }) }))
 vi.mock('@tauri-apps/plugin-os', () => ({ type: () => 'windows' }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('valtio-define', () => ({ useStore: (value: unknown) => value }))
-vi.mock('@/store', () => ({ store: { harness: mocks.harness, recovery: mocks.recovery } }))
+vi.mock('@/store', () => ({ store: { harness: mocks.harness, recovery: mocks.recovery, preinstall: mocks.preinstall } }))
 vi.mock('@/hooks/use-appearance', () => ({ useAppearance: () => '' }))
 vi.mock('@/hooks/use-dsh-style', () => ({ useDshStyle: () => [{}] }))
 vi.mock('@/hooks/use-dsh-shortcuts', () => ({
@@ -73,6 +74,30 @@ it('logs the selected shell branch and deduplicates unrelated rerenders without 
   expect(console.warn).toHaveBeenLastCalledWith('[Webview] shell view', expect.objectContaining({ branch: 'iframe', remoteMode: true, serviceHealthy: false }))
   expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).not.toContain('secret')
   expect(console.warn).toHaveBeenCalledTimes(6)
+})
+
+it('keeps the onboarding layer over the running iframe until every declared step is done', () => {
+  // 服务已经起来（status=ready），但引导未结束：两件事必须同时成立——
+  // iframe 已挂载（服务可用）且引导层压在上面（界面连续，不跳回启动页）。
+  mocks.harness.status = 'ready'
+  mocks.harness.serviceHealthy = true
+  mocks.preinstall.flowPending = true
+  const view = render(<Webview />)
+  expect(screen.getByTitle('session')).toBeTruthy()
+  expect(document.querySelector('[data-onboarding-layer]')).toBeTruthy()
+
+  // 全部步骤完成后撤掉引导层，剩下的就是正常界面。
+  mocks.preinstall.flowPending = false
+  view.rerender(<Webview />)
+  expect(document.querySelector('[data-onboarding-layer]')).toBeNull()
+})
+
+it('never shows the onboarding layer before the service is ready', () => {
+  // preinstall 阶段由启动前的全屏页负责，这里不能再叠一层。
+  mocks.harness.status = 'preinstall'
+  mocks.preinstall.flowPending = true
+  render(<Webview />)
+  expect(document.querySelector('[data-onboarding-layer]')).toBeNull()
 })
 
 function navbar() {

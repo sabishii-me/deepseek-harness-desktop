@@ -51,6 +51,7 @@ export function Webview() {
 
   const { status, serviceHealthy, serviceRunning, iframeKey, iframeLoaded, iframeAlive, iframeError, startupPhase, busyAction } = useStore(store.harness)
   const { recovery } = useStore(store.recovery)
+  const preinstall = useStore(store.preinstall)
   const [remoteView, setRemoteView] = useState({ url: '', tint: null as string | null })
   const [sessionSource, setSessionSource] = useState(sessionTarget?.url ?? '')
   const activeTunnelUrl = remoteView.url || sessionSource
@@ -182,6 +183,26 @@ export function Webview() {
     }
   }
 
+  /**
+   * 引导层：服务就绪后仍覆盖在 iframe 之上，直到清单声明的步骤全部完成。
+   *
+   * 与 `renderContent` 里的 `preinstall` 分支不重叠——那时服务还没起来，
+   * 引导由启动前的全屏页完成；这里承接的是「服务已在运行、但用户还没配置完」
+   * 的那一段，因此界面连续、不会跳回启动页。
+   */
+  /**
+   * 服务就绪后读一次引导进度：决定是否还要压一层全屏设置。
+   *
+   * 只在进入 `ready` 时读一次（`useWatch` 仅在依赖变化时回调），避免每次渲染都打
+   * invoke；完成某一步后由 store 自己刷新，这里不重复订阅。
+   */
+  useWatch([status], () => {
+    if (status === 'ready')
+      void store.preinstall.loadOnboarding()
+  })
+
+  const showFlow = status === 'ready' && preinstall.flowPending
+
   const bridge = live
     ? {
         onToggleSidebar: () => post({ type: 'dsh://sidebar:toggle' }),
@@ -201,6 +222,13 @@ export function Webview() {
       <Navbar onRemoteChange={handleRemoteChange} sidebarCollapsed={sidebarCollapsed} {...bridge} />
       <div className="relative flex min-h-0 flex-1">
         {renderContent()}
+        {/* 引导层压在 iframe 之上：服务已在运行，但用户还在配置，界面因此连续。
+            z 高于 iframe 及其遮罩，低于原生弹窗（后者由 Tauri 管理，不在这里）。 */}
+        <If cond={showFlow}>
+          <div data-onboarding-layer className="absolute inset-0 z-50 flex flex-col bg-startup">
+            <PreinstallSetup />
+          </div>
+        </If>
         <If cond={sessionPending}>
           <div className="absolute inset-0">
             <Loadable

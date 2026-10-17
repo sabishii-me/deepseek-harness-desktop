@@ -59,6 +59,13 @@ export const preinstall = defineStore({
     kernels: [] as PreinstallKernel[],
     /** 正在安装的内核 id（null = 未进行） */
     kernelInstalling: null as string | null,
+    /**
+     * 引导是否仍未结束（清单步骤未全部完成）。
+     *
+     * 服务起来后仍为 true 时，界面把引导层压在 iframe 之上，形成连续的全屏设置流程；
+     * 全部完成后置 false，之后启动不再出现（除非配置新增步骤）。
+     */
+    flowPending: false,
   }),
   actions: {
     /** 拉取预装插件列表（含已安装检测），供首次启动引导界面渲染 */    async load(): Promise<PreinstallPlugin[]> {
@@ -169,10 +176,13 @@ export const preinstall = defineStore({
     async loadOnboarding(): Promise<OnboardingView | null> {
       try {
         this.onboarding = await invoke<OnboardingView>('get_onboarding')
+        // 有声明步骤且尚未完成 → 引导层要压住界面；没有任何步骤 → 不打扰用户。
+        this.flowPending = this.onboarding.steps.length > 0 && !this.onboarding.finished
       }
       catch (err) {
         console.error('[Harness] failed to load onboarding:', err)
         this.onboarding = null
+        this.flowPending = false
       }
       return this.onboarding
     },
