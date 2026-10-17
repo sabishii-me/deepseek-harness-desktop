@@ -44,8 +44,8 @@ interface OwnPackage {
 const OWN_PACKAGES: OwnPackage[] = [
   {
     repo: 'sabishii-me/dsh-model-provider-shisa',
-    tag: 'v0.1.0',
-    asset: 'sabishii-me-dsh-model-provider-shisa-0.1.0.tgz',
+    tag: 'v0.1.1',
+    asset: 'sabishii-me-dsh-model-provider-shisa-0.1.1.tgz',
     target: '@sabishii-me/dsh-model-provider-shisa',
     entry: 'dist/provider.js',
     sourceEnv: 'DSH_SHISA_SOURCE',
@@ -147,7 +147,24 @@ function bundleOwnPackage(spec: OwnPackage): void {
 for (const spec of OWN_PACKAGES)
   bundleOwnPackage(spec)
 
-cpSync(join(repo, 'packages/dsh-tauri-kernel/dist'), join(modules, 'dsh-tauri-kernel/dist'), { recursive: true })
+// 内核包整体拷入（不只是 dist）：下面的步骤要读并改写它的 package.json，把
+// 桥接包声明为运行时依赖。只拷 dist 会留下一个没有清单的空目录，后续读取直接
+// 抛 ENOENT——而 dev 模式恰恰只读这棵资源树。
+{
+  const kernelSource = join(repo, 'packages/dsh-tauri-kernel')
+  const kernelTarget = join(modules, 'dsh-tauri-kernel')
+  rmSync(kernelTarget, { recursive: true, force: true })
+  mkdirSync(kernelTarget, { recursive: true })
+  for (const entry of ['dist', 'package.json', 'README.md', 'LICENSE']) {
+    const from = join(kernelSource, entry)
+    if (!existsSync(from)) {
+      if (entry === 'package.json')
+        throw new Error(`dsh-tauri-kernel package.json missing: ${from}`)
+      continue
+    }
+    cpSync(from, join(kernelTarget, entry), { recursive: true })
+  }
+}
 // The kernel loads the Jouzu model bridge through the profile loader
 // (`ctx.loader.import('<pkg>/model-bridge')`), which resolves from the PROFILE's
 // node_modules — not from this resource tree. Declare the bundled bridge as a
