@@ -34,8 +34,8 @@ describe('optional Jouzu DSH model transport', () => {
     try {
       expect(await readFile(path, 'utf8')).toContain('export default')
       expect(imports).toEqual([
-        '@deepseek-ai/dsh-experimental-jouzu-backend/model-bridge',
-        '@deepseek-ai/dsh-experimental-jouzu-backend/pi-extension',
+        '@sabishii-me/dsh-jouzu-bridge/model-bridge',
+        '@sabishii-me/dsh-jouzu-bridge/pi-extension',
       ])
       expect(result!.command.env!.DSH_BRIDGE_TOKEN).toBe('session-capability')
       expect((await result!.catalog(new AbortController().signal)).models[0]!.id).toBe('dsh/shisa/model-a')

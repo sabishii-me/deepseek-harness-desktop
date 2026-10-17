@@ -18,10 +18,10 @@ export interface JouzuModelAccess {
 export async function openJouzuModelAccess(ctx: HostContext, command: NativeCommand): Promise<JouzuModelAccess | undefined> {
   if (!ctx.llm.listProviders().some(provider => provider.id === 'shisa'))
     return undefined
-  const transport = ctx.loader.unwrapExports(await ctx.loader.import('@deepseek-ai/dsh-experimental-jouzu-backend/model-bridge')) as {
+  const transport = ctx.loader.unwrapExports(await ctx.loader.import('@sabishii-me/dsh-jouzu-bridge/model-bridge')) as {
     openModelBridge: (ctx: HostContext, selection: () => LlmCallConfig, limits: { maxBytes: number, timeoutMs: number }) => Promise<{ url: string, token: string, dispose(): Promise<void> }>
   }
-  const extension = ctx.loader.unwrapExports(await ctx.loader.import('@deepseek-ai/dsh-experimental-jouzu-backend/pi-extension')) as { bridgeExtension: string }
+  const extension = ctx.loader.unwrapExports(await ctx.loader.import('@sabishii-me/dsh-jouzu-bridge/pi-extension')) as { bridgeExtension: string }
   let selection: LlmCallConfig | undefined
   const bridge = await transport.openModelBridge(ctx, () => {
     if (!selection)

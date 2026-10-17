@@ -1,0 +1,8 @@
+{
+  "dshCore": {
+    "version": "0.2.1-alpha.2",
+    "delivery": "managed-download",
+    "bundled": false
+  },
+  "pluginsDigest": "36e5bf4ef1f2671859e9305e466e3022282ad2a9a5455c5a4c438e8e933114c2"
+}

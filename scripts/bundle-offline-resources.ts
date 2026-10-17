@@ -2,12 +2,10 @@ import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { pruneDeployment } from './build-plugins'
-import { buildHostPlugin } from './build-host-plugin'
 
 const repo = resolve(import.meta.dirname, '..')
 const resources = join(repo, 'src-tauri/resources')
 const modules = join(resources, 'node_modules')
-const source = resolve(repo, '../../../packages/experimental')
 const names = Object.keys(JSON.parse(readFileSync(join(repo, 'packages/dsh-tauri-bundle/package.json'), 'utf8')).dependencies)
 // Rehydrate the build-tool package before applying the upstream deployment pruner.
 cpSync(join(repo, 'node_modules/dsh-h3'), join(modules, 'dsh-h3'), { recursive: true, dereference: true })
@@ -39,23 +37,18 @@ else {
   console.warn('Shisa build source not found; built-in model provider omitted:', shisaSource)
 }
 
-// Shisa is a user-selected, independently released plugin; never bundled here.
-const bridge = join(modules, '@deepseek-ai/dsh-experimental-jouzu-backend')
-mkdirSync(bridge, { recursive: true })
-cpSync(join(source, 'jouzu-backend/lib'), join(bridge, 'lib'), { recursive: true })
-const bridgeManifest = JSON.parse(readFileSync(join(source, 'jouzu-backend/package.json'), 'utf8'))
-const bridgeImports = await buildHostPlugin(join(source, 'jouzu-backend/lib/types/model-bridge.js'), join(bridge, 'lib/model-implementation.js'))
-writeFileSync(join(bridge, 'lib/model-bridge.js'), `import { createImplementation } from './model-implementation.js';
-export async function openModelBridge(ctx, ...args) {
- const runtime = Object.fromEntries(await Promise.all(${JSON.stringify(bridgeImports)}.map(async id => [id, id.startsWith('node:') ? await import(id) : await ctx.loader.import(id)])));
- return createImplementation(runtime).openModelBridge(ctx, ...args);
-}
-`)
-bridgeManifest.exports['./model-bridge'].default = './lib/model-bridge.js'
-delete bridgeManifest.dsh
-delete bridgeManifest.devDependencies
-delete bridgeManifest.scripts
-writeFileSync(join(bridge, 'package.json'), JSON.stringify(bridgeManifest, null, 2))
+// Jouzu bridge: an independently released package built from its own repo.
+// It is installed into the profile so the kernel loader import resolves.
+const jouzuBridgeSource = process.env.DSH_JOUZU_BRIDGE_SOURCE
+  ? resolve(process.env.DSH_JOUZU_BRIDGE_SOURCE)
+  : resolve(repo, '../dsh-jouzu-bridge')
+if (!existsSync(join(jouzuBridgeSource, 'package.json')))
+  throw new Error(`Jouzu bridge source not found: ${jouzuBridgeSource}`)
+const jouzuBridgeTarget = join(modules, '@sabishii-me/dsh-jouzu-bridge')
+mkdirSync(jouzuBridgeTarget, { recursive: true })
+for (const entry of ['dist', 'package.json', 'README.md', 'LICENSE'])
+  if (existsSync(join(jouzuBridgeSource, entry)))
+    cpSync(join(jouzuBridgeSource, entry), join(jouzuBridgeTarget, entry), { recursive: true })
 cpSync(join(repo, 'packages/dsh-tauri-kernel/dist'), join(modules, 'dsh-tauri-kernel/dist'), { recursive: true })
 // The kernel loads the Jouzu model bridge through the profile loader
 // (`ctx.loader.import('<pkg>/model-bridge')`), which resolves from the PROFILE's
@@ -73,9 +66,9 @@ cpSync(join(repo, 'packages/dsh-tauri-kernel/dist'), join(modules, 'dsh-tauri-ke
   // profile's node_modules, which is where the loader resolves from.
   kernelManifest.dsh = {
     ...kernelManifest.dsh,
-    runtimeDependencies: ['@deepseek-ai/dsh-experimental-jouzu-backend'],
+    runtimeDependencies: ['@sabishii-me/dsh-jouzu-bridge'],
   }
-  delete kernelManifest.dependencies['@deepseek-ai/dsh-experimental-jouzu-backend']
+  delete kernelManifest.dependencies['@sabishii-me/dsh-jouzu-bridge']
   writeFileSync(kernelManifestPath, JSON.stringify(kernelManifest, null, 2))
 }
 function digest(dir: string): string {

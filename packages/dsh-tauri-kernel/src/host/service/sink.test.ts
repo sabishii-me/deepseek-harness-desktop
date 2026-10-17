@@ -416,6 +416,36 @@ describe('real official cross-step native sink', () => {
     expect(current.state.failure).toBeUndefined()
   })
 
+  it('commits a native result for a tool whose render emits extra blocks', async () => {
+    // Self-review of the same bug class: official tools may render more than one
+    // block (read_image returns text + image). The native result content is built
+    // by the sink, never by the tool's render, so committing must still succeed.
+    context.tools.register({
+      name: 'multi_render',
+      description: 'renders a text block plus a non-text block',
+      parameters: { type: 'object', additionalProperties: true },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [
+          { type: 'text', text: String(value) },
+          { type: 'text', text: 'EXTRA_RENDERED_BLOCK' },
+        ],
+      },
+      async execute() { return 'multi-render-output' },
+    })
+    const current = await exchange()
+    nativeCall(current.state.native, 'multi-real', '{}', 'multi_render')
+    current.state.native.toolEnd('multi-real', 'multi-render-output')
+    await execute('multi-real', current.state.signal, {}, 'multi_render')
+    current.state.tools.get('multi-real')!.step = 1
+    // The official append carries only the sink-built single text block.
+    const message = llmModule.createToolResultMessage({ callId: llmModule.ToolCallId('multi-real'), isError: false, content: [{ type: 'text', text: 'multi-render-output' }] })
+    agent.session.append('tool/result', { turn: 1, step: 1, message }, { surfaceOp: 'append' })
+    expect(current.state.tools.get('multi-real')!.committed).toBe(true)
+    expect(current.state.signal.aborted).toBe(false)
+    expect(current.state.failure).toBeUndefined()
+  })
+
   it.each(['identical', 'changed'] as const)('rejects a genuinely duplicated official native result append with %s content', async (duplicate) => {
     const current = await exchange()
     nativeCall(current.state.native, 'duplicate-append')
