@@ -1,0 +1,38 @@
+ M package.json
+ M packages/dsh-tauri-kernel/src/client/apis/index.ts
+ M packages/dsh-tauri-kernel/src/client/apis/index.type.ts
+ M packages/dsh-tauri-kernel/src/client/index.ts
+ M packages/dsh-tauri-kernel/src/client/locales/index.ts
+ M packages/dsh-tauri-kernel/src/host/apply.test.ts
+ M packages/dsh-tauri-kernel/src/host/server/index.ts
+ M packages/dsh-tauri-kernel/src/host/service/backend.ts
+ M packages/dsh-tauri-kernel/src/host/service/sink.test.ts
+ M src-tauri/resources/manifest.jsonc
+ D src-tauri/src/bridge/jouzu.rs
+ M src-tauri/src/bridge/mod.rs
+ M src-tauri/src/desktop/builder.rs
+ M src-tauri/src/service/plugin/internal/mod.rs
+ M src-tauri/src/service/plugin/preset.rs
+ M src-tauri/src/service/workflow/launch.rs
+ M src/i18n/locales/en-US.json
+ M src/i18n/locales/zh-CN.json
+ D src/layout/components/setup-jouzu.test.tsx
+ D src/layout/components/setup-jouzu.tsx
+ M src/layout/components/setup-preinstall.tsx
+?? .artifacts-test-build.json
+?? .artifacts/
+?? packages/dsh-tauri-kernel/src/client/components/kernel-onboarding.tsx
+?? packages/dsh-tauri-kernel/src/host/server/routes/backends/install.post.ts
+?? packages/dsh-tauri-kernel/src/host/service/jouzu-install.test.ts
+?? packages/dsh-tauri-kernel/src/host/service/jouzu-install.ts
+?? restart2.ps1
+?? scripts/build-host-plugin.ts
+?? scripts/bundle-offline-resources.ts
+?? scripts/bundle-runtime.ts
+?? scripts/business-boundary.test.ts
+?? scripts/profile-bundle.test.ts
+?? src-tauri/resources/offline-manifest.json
+?? src-tauri/resources/package.json
+?? src-tauri/src/service/plugin/internal/legacy_shisa.rs
+?? test/business-boundary.test.ts
+?? test/profile-bundle.test.ts

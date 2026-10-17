@@ -1017,8 +1017,37 @@ Section Uninstall
     DeleteRegKey /ifempty HKCU "${MANUKEY}"
 
     SetShellVarContext current
+
+    ; This fork installs under `Sabishii.dev\DSH-Desktop`, NOT under the bundle id.
+    ; Deleting only `${BUNDLEID}` (the upstream layout) silently removed nothing, so
+    ; users could never uninstall cleanly. Remove the paths this app actually uses,
+    ; then keep the bundle-id sweep for anything older releases left behind.
+    ;
+    ; 1) The data directory: the user may have chosen one (persisted in HKCU), and
+    ;    the default when they did not. The app itself stores sessions, profiles and
+    ;    plugins here, so this is the "user data" the checkbox promises to delete.
+    ReadRegStr $0 HKCU "Software\Sabishii.dev\DSH-Desktop" "DataDir"
+    ${If} $0 != ""
+      RmDir /r "$0"
+    ${EndIf}
+    RmDir /r "$LOCALAPPDATA\Sabishii.dev\DSH-Desktop\data"
+
+    ; 2) The per-user installation directory (only when it is the LocalAppData one;
+    ;    a Program Files install is removed by the normal uninstall sections).
+    RmDir /r "$LOCALAPPDATA\Sabishii.dev\DSH-Desktop\resources"
+    RmDir /r "$LOCALAPPDATA\Sabishii.dev\DSH-Desktop"
+    RmDir "$LOCALAPPDATA\Sabishii.dev"
+
+    ; 3) Application settings root written by the Rust side (logs, dependency
+    ;    mapping, downloaded core): `%APPDATA%\dev.sabishii.dshdesktop`.
     RmDir /r "$APPDATA\${BUNDLEID}"
+
+    ; 4) Legacy/upstream bundle-id layout, kept for older installs.
     RmDir /r "$LOCALAPPDATA\${BUNDLEID}"
+
+    ; Forget the persisted data-directory choice with everything else.
+    DeleteRegKey HKCU "Software\Sabishii.dev\DSH-Desktop"
+    DeleteRegKey /ifempty HKCU "Software\Sabishii.dev"
   ${EndIf}
 
   !ifmacrodef NSIS_HOOK_POSTUNINSTALL

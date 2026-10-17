@@ -1,8 +1,8 @@
 {
   "engines": {
     "dsh": {
-      "recommend": "0.2.0-rc.2",
-      "minimum": "0.1.5-rc.1"
+      "recommend": "0.2.1-alpha.2",
+      "minimum": "0.2.1-alpha.2"
     },
     "node": {
       "version": ">=22.22.0"
@@ -43,8 +43,8 @@
     },
     "dsh": {
       "engine": {
-        "recommend": "0.2.0-rc.2",
-        "minimum": "0.1.5-rc.1"
+        "recommend": "0.2.1-alpha.2",
+        "minimum": "0.2.1-alpha.2"
       },
       "entry": "node_modules/@deepseek-ai/dsh/lib/bin.js",
       "managedRoot": "$AppData/dependencies/dsh",
@@ -78,6 +78,13 @@
       "dsh-tauri-running-changes"
     ],
     "built-in": [
+      {
+        "id": "shisa-ai",
+        "package": "@sabishii-me/dsh-model-provider-shisa",
+        "spec": "@sabishii-me/dsh-model-provider-shisa",
+        "name": "Shisa AI",
+        "repo": "https://github.com/sabishii-me/dsh-model-provider-shisa"
+      },
       {
         "id": "dsh-tauri",
         "spec": "dsh-tauri",
@@ -269,6 +276,18 @@
       }
     ]
   },
+  // 可选原生内核的托管安装描述（数据驱动）。壳层不认识具体内核：这里声明
+  // 「装哪个包、入口在哪、如何探测」，由通用内核安装能力执行。
+  "kernels": [
+    {
+      "id": "jouzu",
+      "name": "Jouzu",
+      "package": "jouzu",
+      "version": "latest",
+      "entry": "dist/cli.js",
+      "probe": { "args": ["pi", "--help"], "expect": "rpc" }
+    }
+  ],
   "pets": {
     "built-in": [
       {

@@ -27,6 +27,18 @@ export const PACKAGE_NAMES: Record<'codex' | 'claude' | 'jouzu', string> = {
   jouzu: 'jouzu',
 }
 
+/**
+ * 每个内核在**托管安装**布局下的入口相对路径（相对 `node_modules/<包名>`）。
+ *
+ * 由本表声明而非写死在安装逻辑里：壳层只提供通用的「装一个包并验证它能跑」
+ * 能力，哪个内核是什么布局由插件拥有。未声明表示该内核暂不支持托管安装。
+ */
+export const PACKAGE_ENTRIES: Record<'codex' | 'claude' | 'jouzu', string | undefined> = {
+  codex: undefined,
+  claude: undefined,
+  jouzu: 'dist/cli.js',
+}
+
 export function nativeEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const clean = { ...env }
   for (const key of Object.keys(clean)) {

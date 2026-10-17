@@ -1,0 +1,154 @@
+//! One-time repair of the two experimental Shisa links shipped by this fork.
+//! Only exact app-owned resource links qualify. Registry/git/user paths and
+//! credentials, sessions, patch layers and node_modules are never changed.
+use std::path::Path;
+use serde_json::Value;
+
+pub(super) fn migrate(profile: &Path, resources: &Path) -> Result<(), String> {
+    let path = profile.join("package.json");
+    let raw = match std::fs::read(&path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("LEGACY_SHISA_READ_FAILED: {e}")),
+    };
+    let mut manifest: Value = serde_json::from_slice(&raw).map_err(|e| format!("LEGACY_SHISA_PARSE_FAILED: {e}"))?;
+    let removed = repair(&mut manifest, resources);
+    if removed.is_empty() { return Ok(()); }
+    // Exclusive backup creation: never overwrite the original recovery copy.
+    use std::io::Write;
+    let backup = profile.join("package.json.before-shisa-independent.bak");
+    match std::fs::OpenOptions::new().write(true).create_new(true).open(&backup) {
+        Ok(mut file) => { file.write_all(&raw).and_then(|_| file.sync_all()).map_err(|e| format!("LEGACY_SHISA_BACKUP_FAILED: {e}"))?; }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {},
+        Err(e) => return Err(format!("LEGACY_SHISA_BACKUP_FAILED: {e}")),
+    }
+    super::manifest::write_profile_manifest(&path, &manifest)?;
+    log::info!("LEGACY_SHISA_MIGRATED: removed app-owned bundle references {:?}; backup={}", removed, backup.display());
+    Ok(())
+}
+fn normalize(value: &str) -> String {
+    let value = value.replace('\\', "/");
+    let value = value.trim_start_matches("//?/").trim_end_matches('/');
+    if cfg!(windows) { value.to_ascii_lowercase() } else { value.to_string() }
+}
+fn repair(manifest: &mut Value, resources: &Path) -> Vec<String> {
+    let mut removed = Vec::new();
+    for (name, folder) in [
+        ("@deepseek-ai/dsh-experimental-shisa-provider", "shisa-provider"),
+        ("@deepseek-ai/dsh-experimental-shisa-ui", "shisa-ui"),
+    ] {
+        let expected = normalize(&resources.join("node_modules").join(folder).to_string_lossy());
+        let owned = manifest.get("dependencies").and_then(|v| v.get(name)).and_then(Value::as_str)
+            .and_then(|s| s.strip_prefix("link:"))
+            .is_some_and(|s| normalize(s) == expected);
+        if !owned { continue; }
+        manifest["dependencies"].as_object_mut().unwrap().remove(name);
+        if let Some(bundles) = manifest.pointer_mut("/dsh/profile/bundles").and_then(Value::as_array_mut) {
+            bundles.retain(|v| v.as_str() != Some(name));
+        }
+        removed.push(name.to_string());
+    }
+    if repair_builtin(manifest, resources) {
+        removed.push(BUILTIN_NAME.to_string());
+    }
+    removed
+}
+
+/// 独立发布时期的包名（现为随包内置）。
+const BUILTIN_NAME: &str = "@sabishii-me/dsh-model-provider-shisa";
+/// 该包随包分发的子目录名（非作用域，与 `resources/node_modules/@sabishii-me/<name>` 对齐）。
+const BUILTIN_FOLDER: &str = "@sabishii-me/dsh-model-provider-shisa";
+
+/// 把「独立发布时期的远端 spec」修正为随包内置的 `link:` 本地依赖。
+///
+/// 只处理**恰好**是远端 URL/tgz 的旧值（独立发布形态）；已经是 `link:` 的、用户自己
+/// 指向别处的、或包不在随包资源里的，一律不动。返回是否发生了修改。
+fn repair_builtin(manifest: &mut Value, resources: &Path) -> bool {
+    let bundled = resources.join("node_modules").join(BUILTIN_FOLDER);
+    if !bundled.join("package.json").is_file() {
+        return false;
+    }
+    let Some(deps) = manifest.get("dependencies").and_then(Value::as_object) else {
+        return false;
+    };
+    let Some(current) = deps.get(BUILTIN_NAME).and_then(Value::as_str) else {
+        return false;
+    };
+    // 只在仍是远端 spec 时改写：`link:`/`file:` 表示用户或本应用已经指向本地，不覆盖。
+    let remote = !current.starts_with("link:") && !current.starts_with("file:");
+    if !remote {
+        return false;
+    }
+    let link = format!("link:{}", bundled.to_string_lossy().replace('\\', "/"));
+    manifest["dependencies"].as_object_mut().unwrap().insert(BUILTIN_NAME.to_string(), Value::String(link));
+    true
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn exact_owned_links_only_and_idempotent() {
+        let root = std::env::temp_dir().join("sabishii-migration-fixture");
+        let name = "@deepseek-ai/dsh-experimental-shisa-provider";
+        let mut m = json!({"dependencies":{name:format!("link:{}", root.join("node_modules/shisa-provider").display()),"@deepseek-ai/dsh-experimental-shisa-ui":"^0.2.1","other":"link:/missing/user"},"dsh":{"profile":{"bundles":[name,"@deepseek-ai/dsh-experimental-shisa-ui","other"]}},"custom":{"keep":true}});
+        assert_eq!(repair(&mut m, &root), vec![name]);
+        assert!(repair(&mut m, &root).is_empty());
+        assert_eq!(m["dsh"]["profile"]["bundles"],json!(["@deepseek-ai/dsh-experimental-shisa-ui","other"]));
+        assert_eq!(m["custom"],json!({"keep":true}));
+        assert_eq!(m["dependencies"]["other"],"link:/missing/user");
+    }
+    #[test]
+    fn file_migration_preserves_original_backup_and_new_optional_package() {
+        let dir = std::env::temp_dir().join(format!("shisa-migration-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let resources = dir.join("app/resources");
+        let old = "@deepseek-ai/dsh-experimental-shisa-provider";
+        let new = "@sabishii-me/dsh-model-provider-shisa";
+        let original = serde_json::to_vec(&json!({"dependencies":{old:format!("link:{}",resources.join("node_modules/shisa-provider").display()),new:"https://example.test/plugin.tgz"},"dsh":{"profile":{"bundles":[old]}}})).unwrap();
+        std::fs::write(dir.join("package.json"), &original).unwrap();
+        migrate(&dir, &resources).unwrap();
+        assert_eq!(std::fs::read(dir.join("package.json.before-shisa-independent.bak")).unwrap(), original);
+        let repaired: Value = serde_json::from_slice(&std::fs::read(dir.join("package.json")).unwrap()).unwrap();
+        assert_eq!(repaired["dependencies"][new], "https://example.test/plugin.tgz");
+        assert_eq!(repaired["dsh"]["profile"]["bundles"],json!([]));
+        migrate(&dir, &resources).unwrap();
+        assert_eq!(std::fs::read(dir.join("package.json.before-shisa-independent.bak")).unwrap(), original);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn never_removes_same_named_user_link() {
+        let mut m=json!({"dependencies":{"@deepseek-ai/dsh-experimental-shisa-provider":"link:/user/source"}});
+        let original=m.clone();
+        assert!(repair(&mut m,Path::new("/app/resources")).is_empty());
+        assert_eq!(m,original);
+    }
+    #[test]
+    fn upgrades_remote_spec_to_bundled_link_and_is_idempotent() {
+        let dir = std::env::temp_dir().join(format!("shisa-builtin-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let resources = dir.join("app/resources");
+        let bundled = resources.join("node_modules").join(BUILTIN_NAME);
+        std::fs::create_dir_all(&bundled).unwrap();
+        std::fs::write(bundled.join("package.json"), "{}").unwrap();
+        let mut m = json!({"dependencies":{BUILTIN_NAME:"https://example.test/plugin.tgz"},"dsh":{"profile":{"bundles":[BUILTIN_NAME]}}});
+        assert_eq!(repair(&mut m, &resources), vec![BUILTIN_NAME.to_string()]);
+        let link = m["dependencies"][BUILTIN_NAME].as_str().unwrap().to_string();
+        assert!(link.starts_with("link:"), "{link}");
+        // 再次执行不再改动（已是指向内置包的 link）。
+        assert!(repair(&mut m, &resources).is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn keeps_user_owned_builtin_spec_untouched() {
+        let dir = std::env::temp_dir().join(format!("shisa-keep-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let resources = dir.join("app/resources");
+        let bundled = resources.join("node_modules").join(BUILTIN_NAME);
+        std::fs::create_dir_all(&bundled).unwrap();
+        std::fs::write(bundled.join("package.json"), "{}").unwrap();
+        let mut m = json!({"dependencies":{BUILTIN_NAME:"link:/user/source"}});
+        let original = m.clone();
+        assert!(repair(&mut m, &resources).is_empty());
+        assert_eq!(m, original);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}

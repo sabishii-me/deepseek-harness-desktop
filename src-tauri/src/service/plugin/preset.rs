@@ -280,8 +280,17 @@ const LEGACY_BUNDLED_PLUGINS_DIR: &str = "preset-plugins";
 /// 在资源根目录下定位某内置插件：pnpm deploy 将包放在 `node_modules/<name>`，
 /// 旧版 `internal-plugins/<id>` 布局仅作为兼容回退。
 fn find_bundled_in_root(root: &std::path::Path, id: &str) -> Option<PathBuf> {
+    // A scoped package id (`@scope/name`) lives two directories deep, so the
+    // deployed layout must be probed with the real package name as well as the
+    // bare preset id used by the unscoped bundled plugins.
+    let package = id.trim_start_matches('@');
     let probe = |base: &std::path::Path| {
         let resources = base.join("resources");
+        for candidate in [resources.join("node_modules").join(id), resources.join("node_modules").join(package)] {
+            if candidate.join("package.json").exists() {
+                return Some(candidate);
+            }
+        }
         let deployed = resources.join("node_modules").join(id);
         if deployed.join("package.json").exists() {
             return Some(deployed);
@@ -297,14 +306,37 @@ fn find_bundled_in_root(root: &std::path::Path, id: &str) -> Option<PathBuf> {
             .then_some(flat_legacy)
     };
     probe(root).or_else(|| {
-        let deployed = root.join("node_modules").join(id);
-        deployed.join("package.json").exists().then_some(deployed)
+        for candidate in [root.join("node_modules").join(id), root.join("node_modules").join(package)] {
+            if candidate.join("package.json").exists() {
+                return Some(candidate);
+            }
+        }
+        None
     })
 }
 
 /// 定位内置插件捆绑目录：debug 优先命中仓库根 `packages/*` 源码目录；
 /// release/兜底按 `resources/node_modules/<name>`（构建期 `pnpm deploy` 产物）查找，
 /// 旧版 `resources/internal-plugins/<id>` 仅作兼容回退。
+///
+/// 内置插件随包目录以**包名**布局（`node_modules/<package>`），而清单里的 `id` 可能
+/// 与包名不同（例如可读 id 对应一个 scoped 包）：因此所有调用方都应经
+/// [`bundled_dir_for`] 解析，而不是直接拿 `id` 去探测。
+pub(crate) fn bundled_dir_for(app_handle: &AppHandle, preset: &PreinstallPluginInfo) -> Option<PathBuf> {
+    // 以声明的包名为准（随包目录按包名布局），再回退到 id 以兼容未声明包名的内置插件。
+    preset
+        .package
+        .as_deref()
+        .and_then(|package| bundled_plugin_dir(app_handle, package))
+        .or_else(|| bundled_plugin_dir(app_handle, &preset.id))
+}
+
+/// 就包名（没有则用 id）定位内置插件捆绑目录。
+///
+/// 用于只有「安装名」而没有完整清单条目的调用点（如离线重建链接）。
+pub(crate) fn bundled_dir_for_name(app_handle: &AppHandle, name: &str) -> Option<PathBuf> {
+    bundled_plugin_dir(app_handle, name)
+}
 ///
 /// 用于安装（`install.rs` 生成 `link:` 依赖）与启动自愈（`internal.rs` 核对路径）。
 ///
@@ -1303,13 +1335,17 @@ mod tests {
     }
 
     /// release 从捆绑目录读描述，因此每个内置插件的 `package.json` 都必须声明它。
+    ///
+    /// 内置插件不一定来自本仓库 `packages/*`（例如单一源码在独立仓库、随包分发）：
+    /// 这里按**包名**解析实际分发目录（dev 源码目录或随包 `resources/node_modules`），
+    /// 而不是要求每个内置插件都在本仓库有一份可发现的源码。【debug 专用】
     #[cfg(debug_assertions)]
     #[test]
     fn every_builtin_plugin_package_declares_a_description() {
         let missing: Vec<String> = load_internal_for_test()
             .into_iter()
             .filter(|plugin| {
-                dev_plugin_dir(&plugin.id)
+                bundled_dir_for_test(plugin)
                     .and_then(|dir| std::fs::read_to_string(dir.join("package.json")).ok())
                     .and_then(|raw| package_json_description(&raw))
                     .is_none()
@@ -1320,5 +1356,21 @@ mod tests {
             missing.is_empty(),
             "内置插件必须在 package.json 声明 description：{missing:?}"
         );
+    }
+
+    /// 测试用：按包名（否则 id）定位内置插件分发目录，先 dev 源码、再随包资源。
+    #[cfg(debug_assertions)]
+    fn bundled_dir_for_test(plugin: &PreinstallPluginInfo) -> Option<PathBuf> {
+        let name = plugin.package.as_deref().unwrap_or(&plugin.id);
+        if let Some(dir) = discover_dev_internal_plugins()
+            .into_iter()
+            .find(|candidate| candidate.info.id == plugin.id || candidate.info.package.as_deref() == Some(name))
+            .map(|candidate| candidate.directory)
+        {
+            return Some(dir);
+        }
+        let resources = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
+        let deployed = resources.join("node_modules").join(name);
+        deployed.join("package.json").exists().then_some(deployed)
     }
 }

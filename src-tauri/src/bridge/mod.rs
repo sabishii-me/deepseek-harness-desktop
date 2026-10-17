@@ -10,8 +10,9 @@ pub mod config;
 pub mod core;
 pub mod data_dir;
 pub mod guard;
+pub mod kernel;
 pub mod lifecycle;
-pub mod jouzu;
+// Jouzu lifecycle is owned by the kernel plugin.
 pub mod pet;
 pub mod plugin;
 pub mod preset_pet;
@@ -26,8 +27,10 @@ pub use clipboard::*;
 pub use config::*;
 pub use core::*;
 pub use data_dir::*;
+pub use guard::*;
+pub use kernel::*;
 pub use lifecycle::*;
-pub use jouzu::*;
+
 pub use pet::*;
 pub use plugin::*;
 pub use preset_pet::*;

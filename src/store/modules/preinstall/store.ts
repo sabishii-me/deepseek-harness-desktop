@@ -1,5 +1,5 @@
 import type { UnlistenFn } from '@tauri-apps/api/event'
-import type { IncompatibleVersion, PolicyBlockedVersion, PreinstallLogPayload, PreinstallPlugin, PreinstallSelection } from './types'
+import type { IncompatibleVersion, PolicyBlockedVersion, PreinstallKernel, PreinstallLogPayload, PreinstallPlugin, PreinstallSelection, PreinstallStep } from './types'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import i18next from 'i18next'
@@ -50,10 +50,15 @@ export const preinstall = defineStore({
     loadError: '',
     /** 是否为首次安装引导（决定默认勾选策略）：boot 流程进入时为 true，侧边栏手动打开为 false */
     isFirstTime: true,
+    /** 当前引导步骤（固定顺序：插件 → 内核） */
+    step: 'plugins' as PreinstallStep,
+    /** 清单声明的可选内核及托管状态 */
+    kernels: [] as PreinstallKernel[],
+    /** 正在安装的内核 id（null = 未进行） */
+    kernelInstalling: null as string | null,
   }),
   actions: {
-    /** 拉取预装插件列表（含已安装检测），供首次启动引导界面渲染 */
-    async load(): Promise<PreinstallPlugin[]> {
+    /** 拉取预装插件列表（含已安装检测），供首次启动引导界面渲染 */    async load(): Promise<PreinstallPlugin[]> {
       if (this.loading)
         return this.plugins
       this.loading = true
@@ -76,6 +81,59 @@ export const preinstall = defineStore({
     /** 追加一行 `dsh plugin` 进程输出（日志上限见 [`LOG_LIMIT`]） */
     pushLog(line: string) {
       this.logs = [...this.logs, line].slice(-LOG_LIMIT)
+    },
+
+    /** 拉取清单声明的可选内核及其托管状态（只读，不安装） */
+    async loadKernels(): Promise<PreinstallKernel[]> {
+      try {
+        this.kernels = await invoke<PreinstallKernel[]>('get_native_kernels')
+      }
+      catch (err) {
+        console.error('[Harness] failed to load native kernels:', err)
+        this.kernels = []
+      }
+      return this.kernels
+    },
+
+    /**
+     * 安装一个可选内核（长任务，进度流式回流到同一个日志面板）。
+     *
+     * 内核是可选步骤：失败只停留在本步，不影响插件安装结果，用户可重试或继续。
+     */
+    async installKernel(id: string): Promise<boolean> {
+      if (this.kernelInstalling !== null)
+        return false
+      this.kernelInstalling = id
+      this.error = ''
+      this.logs = []
+      let unlisten: UnlistenFn | null = null
+      try {
+        unlisten = await this.listenLog()
+        await invoke('install_native_kernel_by_id', { id })
+        await this.loadKernels()
+        return true
+      }
+      catch (err) {
+        console.error('[Harness] native kernel install failed:', err)
+        this.error = String(err)
+        return false
+      }
+      finally {
+        unlisten?.()
+        this.kernelInstalling = null
+      }
+    },
+
+    /** 进入下一步（插件 → 内核） */
+    nextStep() {
+      if (this.step === 'plugins')
+        this.step = 'kernel'
+    },
+
+    /** 回退一步 */
+    backStep() {
+      if (this.step === 'kernel')
+        this.step = 'plugins'
     },
 
     /** 预装安装日志流：dsh plugin 进程输出逐行追加 */

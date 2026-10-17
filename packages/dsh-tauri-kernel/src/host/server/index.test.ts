@@ -34,7 +34,7 @@ import { identity } from '../service/identity'
 import { session } from '../service/session'
 import { detectBackend } from '../utils/detection'
 
-vi.mock('../utils/detection', () => ({ detectBackend: vi.fn() }))
+vi.mock('../utils/detection', async (importOriginal) => ({ ...await importOriginal<typeof import('../utils/detection')>(), detectBackend: vi.fn() }))
 vi.mock('../backends/codex', () => ({ createCodexSession: vi.fn() }))
 vi.mock('../backends/claude', () => ({ createClaudeSession: vi.fn() }))
 

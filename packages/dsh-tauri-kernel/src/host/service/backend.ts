@@ -1,4 +1,3 @@
-import process from 'node:process'
 import type { BackendDetection } from '../../shared/types'
 import type { Config } from '../config/options'
 import type { HostContext } from '../types'
@@ -10,6 +9,7 @@ import { server } from '../server'
 import { detectBackend } from '../utils/detection'
 import { loadRuntimeModules } from '../utils/runtime-modules'
 import { runtimeVersion } from '../utils/runtime-version'
+import { managedKernelEntry, managedKernelBackends } from './kernel-entry'
 
 const DEFAULT_PROBE_TIMEOUT_MS = 5_000
 
@@ -33,10 +33,16 @@ export const backend = defineService({
     const config = getServerOptions<Config>(server)
     const override = id === 'codex' ? config.codexPath : id === 'claude' ? config.claudePath : config.jouzuPath
     let result = await detectBackend(id, override, { timeoutMs: probeTimeout(id, config.probeTimeoutMs) })
-    // Explicit configuration and user PATH installations retain priority.
-    if (id === 'jouzu' && override === undefined && !result.detection.installed
-      && result.detection.hint?.startsWith('BRIDGE_EXECUTABLE_MISSING') && process.env.DSH_MANAGED_JOUZU_PATH)
-      result = await detectBackend(id, process.env.DSH_MANAGED_JOUZU_PATH, { timeoutMs: probeTimeout(id, config.probeTimeoutMs) })
+    // Explicit configuration and user PATH installations retain priority. A managed
+    // installation is consulted generically (any kernel that declares one) and never
+    // replaces a working user CLI.
+    const managed = override === undefined && !result.detection.installed
+      && result.detection.hint?.startsWith('BRIDGE_EXECUTABLE_MISSING')
+      && managedKernelBackends().includes(id)
+      ? managedKernelEntry(id)
+      : undefined
+    if (managed !== undefined)
+      result = await detectBackend(id, managed, { timeoutMs: probeTimeout(id, config.probeTimeoutMs) })
     try {
       const modules = await loadRuntimeModules(ctx.loader)
       if (!runtime.ready || typeof modules.appendPluginRecord !== 'function' || typeof modules.pluginRecordOf !== 'function' || typeof ctx.sessions.get !== 'function' || typeof ctx.sessionProjections.stateOf !== 'function')

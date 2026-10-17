@@ -1,0 +1,61 @@
+import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { BackendDetection } from '../../shared/types'
+import { useEffect, useState } from 'react'
+import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { getBackends } from '../apis'
+import { locale } from '../locales'
+import { kernelStore } from '../store/modules/kernel-store'
+
+/** The Jouzu row from the last detection pass, if the kernel has one yet. */
+function jouzuRow(backends: readonly BackendDetection[] | undefined): BackendDetection | undefined {
+  return backends?.find(row => row.id === 'jouzu')
+}
+
+/**
+ * First-run step that reports the optional Jouzu kernel's readiness.
+ *
+ * Installing a kernel is a long task (a real npm install) and belongs to the
+ * shell's onboarding phase, which owns the runtime and the progress channel —
+ * the in-page client cannot await it. This step therefore only *reports* what
+ * detection found and hands control on; it never claims to install.
+ */
+export function KernelOnboarding({ complete }: PropsRuntime<'settings.onboarding'>) {
+  locale.useLocale()
+  const [backends, setBackends] = useState<BackendDetection[]>()
+  const [error, setError] = useState('')
+  const row = jouzuRow(backends)
+  const installed = row?.installed === true
+  const version = row?.version
+
+  useEffect(() => {
+    let active = true
+    void getBackends().then((rows) => {
+      if (!active) return
+      setBackends(rows)
+      // Detection is shared state: keep the kernel picker in sync with what the
+      // onboarding step just learned instead of asking again.
+      kernelStore.$patch({ backends: rows, phase: 'ready', error: null })
+    }, (reason) => { if (active) setError(reason instanceof Error ? reason.message : String(reason)) })
+    return () => { active = false }
+  }, [])
+
+  if (backends === undefined && error === '')
+    return null
+
+  const title = installed ? locale.text('kernel.onboardingReadyTitle') : locale.text('kernel.onboardingTitle')
+  const status = installed
+    ? version ? locale.text('kernel.onboardingReady', { version }) : locale.text('kernel.onboardingReadyNoVersion')
+    : locale.text('kernel.onboardingIntro')
+
+  return (
+    <Modal open closeLabel={locale.text('kernel.onboardingSkip')} title={title} onClose={complete}>
+      <p>{status}</p>
+      {error !== '' && <p role="alert">{error}</p>}
+      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+        <Button variant="ghost" onClick={complete}>{locale.text('kernel.onboardingSkip')}</Button>
+        <Button variant="primary" onClick={complete}>{locale.text('kernel.onboardingContinue')}</Button>
+      </div>
+    </Modal>
+  )
+}

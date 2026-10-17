@@ -17,12 +17,12 @@
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use super::cancel::terminate_owned_install;
 use super::install::install_internal;
 use super::installed::{installed_name, profile_dir, ProfilePackageJson};
-use super::preset::{bundled_dep_spec, bundled_plugin_dir, load_presets, PreinstallPluginInfo};
+use super::preset::{bundled_dep_spec, load_presets, PreinstallPluginInfo};
 use super::process::{new_process_owner, PreinstallLogPayload, ProcessOwner, PREINSTALL_LOG_EVENT};
 use crate::config;
 
@@ -33,6 +33,7 @@ use manifest::{
 };
 use materialize::{materialize_links, OfflineLink};
 
+mod app_owned_shisa;
 mod manifest;
 mod materialize;
 
@@ -336,6 +337,19 @@ async fn ensure_scoped(app_handle: &AppHandle) -> Result<(), String> {
         .into_iter()
         .filter(|p| p.internal && !p.unsupported_on(core_version.as_deref()))
         .collect();
+    // 本应用早期写入的悬空 Shisa 资源链接先清：它是幂等的一次性数据修复，与本次
+    // 内置插件配置无关，必须早于 fingerprint 复用早退。通用清理会跳过官方作用域包名，
+    // 它们没有其它自愈路径，残留会让 `dsh plugin install` 解析 bundle 失败。
+    {
+        let profile = profile_dir(app_handle);
+        if let Ok(resources) = app_handle.path().resource_dir() {
+            app_owned_shisa::migrate(&profile, &resources.join("resources"))?;
+        }
+    }
+    // 内置插件的运行时依赖也必须在 loader 解析之前就位（否则插件 import 直接
+    // `ERR_MODULE_NOT_FOUND`）；与上的修复一样是幂等的事实校验，不依赖本轮
+    // 是否有插件需要重装，因此早于 fingerprint 复用早退。
+    ensure_runtime_dependencies(app_handle)?;
     // 同一次启动的两路调用：后到的一路输入未变、且前一路刚成功，直接复用结论，
     // 连下面的失效链接清理、可写性预检与 loader 状态修复一起跳过（issue #766）。
     let fingerprint = ensure_fingerprint(app_handle, &internal);
@@ -350,6 +364,7 @@ async fn ensure_scoped(app_handle: &AppHandle) -> Result<(), String> {
         );
         return Ok(());
     }
+    let profile = profile_dir(app_handle);
     prune_dangling_link_deps(app_handle, &internal);
     if internal.is_empty() {
         return Ok(());
@@ -717,7 +732,7 @@ async fn ensure_inner(
         {
             continue;
         }
-        let Some(bundled) = bundled_plugin_dir(app_handle, &preset.id) else {
+        let Some(bundled) = super::preset::bundled_dir_for(app_handle, &preset) else {
             // 未找到内置插件目录：release 说明构建期 build:plugins 未打包（发布
             // 缺陷，由 build:plugins 响亮失败）；debug 自动发现 packages/* 中非私有
             // 且含 dsh 对象的包，未命中时跳过（「找不到则不装」）。
@@ -1044,6 +1059,64 @@ fn path_lives_under(path: &str, entry: &Path) -> bool {
     path == entry || path.starts_with(&format!("{entry}/"))
 }
 
+/// 确保内置插件声明的**运行时依赖**在 profile 里可解析。
+///
+/// 内置插件以 `link:` 指向随包资源安装，不进 pnpm 解析；它若在运行时用
+/// `ctx.loader.import('<pkg>/...')` 引用随包内的另一个包，loader 会从 **profile** 的
+/// `node_modules` 解析，那里没有就抛 `ERR_MODULE_NOT_FOUND`（表现为每次内核调用 500）。
+///
+/// 因此插件在自身 `package.json` 的 `dsh.runtimeDependencies` 里声明这类包的名字；
+/// 本函数把它们从**随包资源**通用地链接进 profile。脚本不写任何具体包名知识。
+fn ensure_runtime_dependencies(app_handle: &AppHandle) -> Result<(), String> {
+    let Ok(resources) = app_handle.path().resource_dir() else {
+        return Ok(());
+    };
+    let resources = resources.join("resources").join("node_modules");
+    let profile = profile_dir(app_handle);
+    let node_modules = profile.join("node_modules");
+    for preset in super::preset::load_presets(app_handle) {
+        if !preset.internal {
+            continue;
+        }
+        let name = installed_name(&preset);
+        let Some(bundled) = super::preset::bundled_dir_for_name(app_handle, name) else {
+            continue;
+        };
+        let Ok(raw) = std::fs::read_to_string(bundled.join("package.json")) else {
+            continue;
+        };
+        let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            continue;
+        };
+        let Some(deps) = manifest
+            .pointer("/dsh/runtimeDependencies")
+            .and_then(serde_json::Value::as_array)
+        else {
+            continue;
+        };
+        for dependency in deps.iter().filter_map(serde_json::Value::as_str) {
+            let source = resources.join(dependency);
+            if !source.join("package.json").is_file() {
+                log::warn!(
+                    "INTERNAL_PLUGIN_RUNTIME_DEP_MISSING: {dependency}（随包资源缺失，声明方 {name}）"
+                );
+                continue;
+            }
+            let entry = node_modules.join(dependency);
+            if internal_plugin_entry_is_ready(&entry) {
+                continue;
+            }
+            if let Some(parent) = entry.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            crate::service::core::create_directory_link(&source, &entry)
+                .map_err(|e| format!("INTERNAL_PLUGIN_RUNTIME_DEP_LINK_FAILED: {dependency}: {e}"))?;
+            log::info!("INTERNAL_PLUGIN_RUNTIME_DEP_LINKED: {dependency}（声明方 {name}）");
+        }
+    }
+    Ok(())
+}
+
 /// 用桌面端的目录链接实现落盘本轮待修复的内置插件入口（离线、不依赖 node/pnpm）。
 fn materialize_internal_links(
     app_handle: &AppHandle,
@@ -1052,8 +1125,8 @@ fn materialize_internal_links(
 ) -> Result<(), String> {
     let mut links = Vec::with_capacity(need.len());
     for (id, name, entry) in need {
-        let bundled = bundled_plugin_dir(app_handle, id)
-            .ok_or_else(|| format!("INTERNAL_PLUGIN_BUNDLE_MISSING: {id}"))?;
+        let bundled = super::preset::bundled_dir_for_name(app_handle, name)
+            .ok_or_else(|| format!("INTERNAL_PLUGIN_BUNDLE_MISSING: {name}"))?;
         links.push(OfflineLink {
             id: id.clone(),
             name: name.clone(),

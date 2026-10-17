@@ -1,4 +1,3 @@
-import { SetupJouzu } from './setup-jouzu'
 import type { IconComponent } from './loadable'
 import type { PluginProcess } from '@/store/modules/plugins'
 import type { PreinstallPlugin } from '@/store/modules/preinstall'
@@ -183,6 +182,64 @@ function refusedVersions(process: PluginProcess): string {
   return (process.refusal?.versions ?? []).map(item => `${item.name}@${item.version}`).join('、')
 }
 
+/** 内核步骤：可选安装清单声明的内核，装完/跳过后继续启动。 */
+function KernelStep({ installing }: { installing: boolean }) {
+  const { t } = useTranslation()
+  const preinstall = useStore(store.preinstall)
+  const busy = preinstall.kernelInstalling !== null
+  return (
+    <div className="flex flex-col gap-3">
+      <If cond={preinstall.kernels.length > 0} else={<Empty>{t('preinstall.kernel_empty')}</Empty>}>
+        <div className="flex flex-col gap-2">
+          {preinstall.kernels.map(kernel => (
+            <Card key={kernel.id} className="flex items-center justify-between gap-3 bg-panel2 p-3 shadow-none">
+              <div className="flex min-w-0 flex-col gap-0.5">
+                <span className="truncate text-[13px] font-medium text-ink">{kernel.name}</span>
+                <span className="truncate text-[11px] text-muted">
+                  {kernel.installed
+                    ? t('preinstall.kernel_installed', { version: kernel.detectedVersion ?? kernel.version ?? '' })
+                    : t('preinstall.kernel_optional')}
+                </span>
+              </div>
+              <If cond={!kernel.installed}>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  className="h-8 shrink-0"
+                  isDisabled={busy || installing}
+                  onPress={() => { void store.preinstall.installKernel(kernel.id) }}
+                >
+                  {preinstall.kernelInstalling === kernel.id ? t('preinstall.kernel_installing') : t('preinstall.kernel_install')}
+                </Button>
+              </If>
+              <If cond={kernel.installed}>
+                <Chip size="sm" variant="soft" color="default" className="shrink-0">{t('preinstall.installed')}</Chip>
+              </If>
+            </Card>
+          ))}
+        </div>
+      </If>
+      {preinstall.error !== '' && (
+        <div className="flex flex-col gap-1 rounded-md border border-danger/30 bg-danger/5 p-3">
+          <p className="text-xs font-medium text-danger">{t('preinstall.kernel_failed')}</p>
+          <p className="max-h-[120px] overflow-y-auto break-all font-mono text-[11px] text-muted">{preinstall.error}</p>
+        </div>
+      )}
+      <If cond={preinstall.logs.length > 0}>
+        <LogPanel logs={preinstall.logs} />
+      </If>
+      <div className="flex items-center justify-between gap-2">
+        <Button className="h-8" size="sm" variant="tertiary" isDisabled={busy || installing} onPress={() => store.preinstall.backStep()}>
+          {t('preinstall.back')}
+        </Button>
+        <Button className="h-8" size="sm" variant="primary" isDisabled={busy || installing} onPress={() => { void store.preinstall.finish() }}>
+          {t('preinstall.continue')}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 export function PreinstallSetup() {
   const { t } = useTranslation()
   const preinstall = useStore(store.preinstall)
@@ -206,6 +263,7 @@ export function PreinstallSetup() {
   // 进入引导页时拉取插件列表（仅挂载一次，无需清理）
   useMount(() => {
     void store.preinstall.load()
+    void store.preinstall.loadKernels()
   })
 
   // dsh plugin 进程输出经 `preinstall-log` 回流；卸载即注销，不残留监听
@@ -277,7 +335,13 @@ export function PreinstallSetup() {
       setFailures(failed)
       return
     }
-    // 未产生任何变更时也要标记完成，否则引导页每轮启动都会再次弹出
+    // 插件装完进入可选的「安装内核」步骤；清单未声明任何内核时直接收尾，
+    // 不展示空步骤。
+    await store.preinstall.loadKernels()
+    if (store.preinstall.kernels.length > 0) {
+      store.preinstall.nextStep()
+      return
+    }
     await store.preinstall.finish()
   }
 
@@ -335,12 +399,18 @@ export function PreinstallSetup() {
     <div className="flex h-full w-full items-center justify-center bg-startup">
       <div className="flex w-[min(880px,92vw)] flex-col gap-4">
         <header className="flex flex-col items-center gap-1 text-center">
-          <Typography type="h4" className="!text-ink">{t('preinstall.title')}</Typography>
-          <Typography color="muted" type="body-sm" className="max-w-[440px]">{t('preinstall.subtitle')}</Typography>
+          <Typography type="h4" className="!text-ink">
+            {preinstall.step === 'kernel' ? t('preinstall.title_kernel') : t('preinstall.title')}
+          </Typography>
+          <Typography color="muted" type="body-sm" className="max-w-[440px]">
+            {preinstall.step === 'kernel' ? t('preinstall.step_kernel_subtitle') : t('preinstall.step_plugins_subtitle')}
+          </Typography>
         </header>
 
-        <SetupJouzu />
-
+        <If cond={preinstall.step === 'kernel'}>
+          <KernelStep installing={installing} />
+        </If>
+        <If cond={preinstall.step === 'plugins'}>
         <If
           cond={installing}
           else={(
@@ -575,6 +645,7 @@ export function PreinstallSetup() {
               </Button>
             </div>
           </div>
+        </If>
         </If>
       </div>
     </div>

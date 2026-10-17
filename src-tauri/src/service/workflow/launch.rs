@@ -637,10 +637,6 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
         "DSH_HOME".to_string(),
         dsh_home.to_string_lossy().into_owned(),
     );
-    let jouzu_entry = crate::bridge::jouzu::managed_entry(&app_handle);
-    if jouzu_entry.is_file() && config::get_base_dir(&app_handle).join("dependencies/jouzu/.verified").is_file() {
-        envs.insert("DSH_MANAGED_JOUZU_PATH".to_string(), jouzu_entry.to_string_lossy().into_owned());
-    }
     envs.insert("DSH_TELEMETRY_DISABLED".to_string(), "1".to_string());
     envs.insert("NO_COLOR".to_string(), "1".to_string());
     envs.insert("DSH_WEB_PORT".to_string(), setting.port.to_string());
@@ -734,6 +730,15 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     // 只有该标记在场时它才覆写 connection 的鉴权闸门，因此同一 profile 下独立运行
     // 的 `dsh web` 不受影响（取代原先对核心 JS 打的 `--skip-auth` 磁盘补丁）。
     envs.insert("DSH_TAURI_EMBEDDED".to_string(), "1".to_string());
+
+    // 托管内核根：壳层只告诉子进程「托管安装放在哪里」，由内核插件用自己的数据表
+    // 解析各内核的入口。壳层因此不需要认识任何具体内核（去产品名）。
+    envs.insert(
+        "DSH_NATIVE_KERNEL_ROOT".to_string(),
+        crate::service::kernel::install::native_kernel_root(&app_handle)
+            .to_string_lossy()
+            .into_owned(),
+    );
 
     // issue #1064：AppImage 的旧库不能泄漏给 Harness 启动的宿主目录选择器。
     #[cfg(target_os = "linux")]

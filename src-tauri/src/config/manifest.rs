@@ -22,6 +22,40 @@ pub struct Manifest {
     pub plugins: Plugins,
     pub pets: Pets,
     pub dependencies: BTreeMap<String, DependencySpec>,
+    /// 可选原生内核的托管安装描述（数据驱动、无产品名硬编码）。
+    /// 壳层只把它当作数据读取并转发给界面；哪个内核是哪个包由清单声明。
+    pub kernels: Vec<KernelSpec>,
+}
+
+/// 一个可选原生内核的托管安装描述。
+///
+/// 壳层不认识任何具体内核：这里声明「装哪个包、入口在哪、如何探测」，
+/// 安装执行由通用的 `service::kernel::install` 完成。
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KernelSpec {
+    /// 稳定标识（界面用）。
+    pub id: String,
+    /// 展示名。
+    pub name: String,
+    /// npm 包名。
+    pub package: String,
+    /// 期望版本或 `latest`；缺省视为 `latest`。
+    pub version: Option<String>,
+    /// 入口相对 `node_modules/<package>` 的相对路径。
+    pub entry: String,
+    /// 探测参数与期望输出。
+    pub probe: KernelProbe,
+}
+
+/// 内核入口探测契约。
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KernelProbe {
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub expect: String,
 }
 
 /// 引擎版本声明（仅消费 `dsh`；node/pnpm/git 为发布侧声明，运行期常量另见 constants）

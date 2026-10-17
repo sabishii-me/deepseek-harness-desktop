@@ -1467,7 +1467,7 @@ async fn rebuild_native_packages(
 
 /// 定位与给定 node 配套的 npm 命令：优先 `<node 目录>/node_modules/npm/bin/npm-cli.js`
 /// （捆绑运行时与官方发行版都在 node 目录下自带 npm），否则退回 PATH 中的 npm。
-fn npm_command(node: &Path) -> (OsString, Vec<OsString>) {
+pub(crate) fn npm_command(node: &Path) -> (OsString, Vec<OsString>) {
     if let Some(cli) = npm_cli_path_for(node) {
         return (node.as_os_str().to_os_string(), vec![cli.into_os_string()]);
     }

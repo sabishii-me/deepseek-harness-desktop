@@ -22,7 +22,7 @@
 //! - [`version`]：预打包核心多版本管理（列出 / 切换 / 下载 / 卸载）
 
 mod local;
-mod runtime;
+pub(crate) mod runtime;
 mod source;
 mod version;
 

@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
 use super::bundled_dep_spec;
-use super::bundled_plugin_dir;
 use super::PreinstallPluginInfo;
 
 /// 本地目录 spec 的判定：`link:` / `file:` 前缀、UNC、盘符绝对路径、`/` 起始的
@@ -180,7 +179,7 @@ pub(super) fn bundled_dir_of(
     if !preset.internal {
         return None;
     }
-    bundled_plugin_dir(app_handle, &preset.id)
+    crate::service::plugin::preset::bundled_dir_for(app_handle, preset)
 }
 
 /// 解析某预设的安装 spec（纯函数，便于单测）：内置插件固定为随包捆绑目录的

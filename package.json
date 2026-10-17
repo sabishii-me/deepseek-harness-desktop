@@ -4,7 +4,7 @@
   "version": "0.24.1",
   "private": true,
   "packageManager": "pnpm@11.7.0",
-  "description": "Desktop application for DeepSeek Harness (dsh) — one-click local install and launch, no Node.js setup required.",
+  "description": "Desktop application for DeepSeek Harness (dsh) \u2014 one-click local install and launch, no Node.js setup required.",
   "main": "./src-native/entry.ts",
   "scripts": {
     "dev": "vite",
@@ -35,7 +35,8 @@
     "prebuild:native": "expo prebuild --platform android --no-install",
     "prebuild:ios": "expo prebuild --platform ios --no-install",
     "test:native": "vitest run --config vitest.native.config.ts",
-    "typecheck:native": "tsc --project tsconfig.native.json --noEmit"
+    "typecheck:native": "tsc --project tsconfig.native.json --noEmit",
+    "bundle:resources": "tsx scripts/bundle-offline-resources.ts"
   },
   "dependencies": {
     "@choochmeque/tauri-plugin-notifications-api": "catalog:",

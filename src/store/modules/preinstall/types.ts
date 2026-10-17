@@ -20,6 +20,19 @@ export interface PreinstallLogPayload {
   line: string
 }
 
+/** 引导步骤：先装插件，再（可选）装内核。模型适配器登录在服务启动后由插件自己贡献。 */
+export type PreinstallStep = 'plugins' | 'kernel'
+
+/** 清单声明的一个可选内核及其托管状态（与 Rust `KernelDescriptor` 对齐）。 */
+export interface PreinstallKernel {
+  id: string
+  name: string
+  package: string
+  version: string | null
+  installed: boolean
+  detectedVersion: string | null
+}
+
 /** 预装插件的安装/卸载 diff（前端比对勾选结果得出） */
 export interface PreinstallSelection {
   installIds?: string[]

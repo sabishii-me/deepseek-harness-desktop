@@ -1,0 +1,49 @@
+import { execFile } from 'node:child_process'
+import { access, mkdir } from 'node:fs/promises'
+import { dirname, isAbsolute, join } from 'node:path'
+import process from 'node:process'
+import { promisify } from 'node:util'
+import { detectBackend } from '../utils/detection'
+
+const run = promisify(execFile)
+const VERSION = '0.2.0'
+let pending: Promise<void> | undefined
+
+/** Owned by the kernel plugin in the Host's explicitly selected data directory. */
+export function managedJouzuEntry(): string | undefined {
+  const home = process.env.DSH_HOME
+  return home && isAbsolute(home) ? join(home, 'dependencies', 'dsh-tauri-kernel', 'jouzu', 'node_modules', 'jouzu', 'dist', 'cli.js') : undefined
+}
+
+export async function installJouzu(override?: string): Promise<void> {
+  if (pending) return pending
+  pending = install(override).finally(() => { pending = undefined })
+  return pending
+}
+
+async function install(override?: string): Promise<void> {
+  // Never replace a user's configured or PATH installation, including an
+  // incompatible one. Its detection error must remain visible to the user.
+  const existing = await detectBackend('jouzu', override, { timeoutMs: 30_000 })
+  if (existing.command) return
+  if (override !== undefined || !existing.detection.hint?.startsWith('BRIDGE_EXECUTABLE_MISSING'))
+    throw new Error(existing.detection.hint ?? 'Existing Jouzu installation needs attention')
+  const entry = managedJouzuEntry()
+  if (!entry) throw new Error('Host data directory is unavailable; no installation was attempted')
+  const managed = await detectBackend('jouzu', entry, { timeoutMs: 30_000 })
+  if (managed.command) return
+  const nodeDir = dirname(process.execPath)
+  const candidates = [join(nodeDir, 'node_modules/npm/bin/npm-cli.js'), join(nodeDir, '../lib/node_modules/npm/bin/npm-cli.js')]
+  let npm: string | undefined
+  for (const candidate of candidates) {
+    try { await access(candidate); npm = candidate; break } catch { /* try next runtime layout */ }
+  }
+  if (!npm) throw new Error('The Host Node runtime has no npm; configure an existing Jouzu CLI path instead')
+  const root = dirname(dirname(dirname(dirname(entry))))
+  await mkdir(root, { recursive: true })
+  await run(process.execPath, [npm, 'install', '--prefix', root, '--no-audit', '--no-fund', '--save-exact', `jouzu@${VERSION}`], {
+    windowsHide: true, timeout: 600_000, maxBuffer: 2 * 1024 * 1024,
+  })
+  const result = await detectBackend('jouzu', entry, { timeoutMs: 30_000 })
+  if (!result.command) throw new Error(result.detection.hint ?? 'Installed Jouzu failed the kernel protocol probe')
+}
