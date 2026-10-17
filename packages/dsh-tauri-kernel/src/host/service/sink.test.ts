@@ -362,17 +362,32 @@ describe('real official cross-step native sink', () => {
     expect(runtime.exchanges.size).toBe(0)
   }, 10_000)
 
-  it.each(['content', 'isError', 'meta'] as const)('rejects a first official native result append with changed %s', async (field) => {
+  it.each(['content', 'isError'] as const)('rejects a first official native result append with changed %s', async (field) => {
     const current = await exchange()
     nativeCall(current.state.native, 'first-append')
     current.state.native.toolEnd('first-append', 'complete native output')
     await execute('first-append', current.state.signal)
     current.state.tools.get('first-append')!.step = 1
     const message = llmModule.createToolResultMessage({ callId: llmModule.ToolCallId('first-append'), isError: field === 'isError', content: [{ type: 'text', text: field === 'content' ? 'pruned output' : 'complete native output' }] })
-    agent.session.append('tool/result', { turn: 1, step: 1, message, ...(field === 'meta' ? { meta: { rewritten: true } } : {}) }, { surfaceOp: 'append' })
+    agent.session.append('tool/result', { turn: 1, step: 1, message }, { surfaceOp: 'append' })
     expect(current.state.tools.get('first-append')!.committed).toBe(false)
     expect(current.state.signal.aborted).toBe(true)
     expect(current.state.failure).toMatchObject({ message: 'BRIDGE_TOOL_RESULT_REJECTED: 官方日志没有完整保留原生工具结果。' })
+  })
+
+  it('commits a native result whose official append carries private presentation meta', async () => {
+    // Tools that declare `presentationMeta` (Write/Edit and friends) persist a
+    // private display payload on the official `tool/result` event. That meta is
+    // part of the official log by design and must not reject the append.
+    const current = await exchange()
+    nativeCall(current.state.native, 'meta-append')
+    current.state.native.toolEnd('meta-append', 'complete native output')
+    await execute('meta-append', current.state.signal)
+    current.state.tools.get('meta-append')!.step = 1
+    const message = llmModule.createToolResultMessage({ callId: llmModule.ToolCallId('meta-append'), isError: false, content: [{ type: 'text', text: 'complete native output' }] })
+    agent.session.append('tool/result', { turn: 1, step: 1, message, meta: { operation: 'write', path: '/tmp/x', diffs: [] } }, { surfaceOp: 'append' })
+    expect(current.state.tools.get('meta-append')!.committed).toBe(true)
+    expect(current.state.signal.aborted).toBe(false)
   })
 
   it.each(['identical', 'changed'] as const)('rejects a genuinely duplicated official native result append with %s content', async (duplicate) => {

@@ -360,7 +360,12 @@ export const sink = defineService({
       return
     const state = official.state
     const tool = state.tools.get(event.data.message.toolCallId)
-    if (!tool || tool.step !== event.data.step || !tool.accepted || tool.committed || !tool.result || tool.result.isError !== (event.data.message.isError === true) || !isDeepStrictEqual(event.data.message.content, [{ type: 'text', text: tool.result.output }]) || (tool.result.isError && event.data.error?.code !== 'BRIDGE_NATIVE_TOOL_ERROR') || event.data.meta !== undefined) {
+    // `event.data.meta` carries the official tool's PRIVATE presentation payload
+    // (e.g. the result-time diff a Write/Edit card renders on replay). It is part
+    // of the official log by design and says nothing about whether the native
+    // result was preserved, so it must not reject the append — doing so failed
+    // every native-kernel turn whose tool declares `presentationMeta`.
+    if (!tool || tool.step !== event.data.step || !tool.accepted || tool.committed || !tool.result || tool.result.isError !== (event.data.message.isError === true) || !isDeepStrictEqual(event.data.message.content, [{ type: 'text', text: tool.result.output }]) || (tool.result.isError && event.data.error?.code !== 'BRIDGE_NATIVE_TOOL_ERROR')) {
       state.failure = new Error('BRIDGE_TOOL_RESULT_REJECTED: 官方日志没有完整保留原生工具结果。')
       state.controller.abort(state.failure)
       return
