@@ -177,6 +177,49 @@ function LogPanel({ logs }: { logs: readonly string[] }) {
   )
 }
 
+/**
+ * 安装过程视图：把「正在装什么」讲清楚，日志默认收起。
+ *
+ * 普通用户不该在第一屏看到 pnpm 原始输出——那是排查用的。默认给一份进度
+ * （正在安装的插件、当前阶段），需要细节时再展开日志。
+ */
+function InstallProgress({ logs, targets, title }: {
+  logs: readonly string[]
+  targets: readonly string[]
+  title: string
+}) {
+  const { t } = useTranslation()
+  const [showLogs, setShowLogs] = useState(false)
+  return (
+    <div className="flex flex-col gap-2.5">
+      <Card className="flex flex-col gap-2 bg-panel2 p-4 shadow-none">
+        <div className="flex items-center gap-2">
+          <Spinner size="sm" />
+          <span className="text-[13px] font-medium text-ink">{title}</span>
+        </div>
+        {targets.length > 0 && (
+          <div className="flex flex-col gap-1">
+            {targets.map(target => (
+              <span key={target} className="truncate text-[11px] text-muted">{target}</span>
+            ))}
+          </div>
+        )}
+      </Card>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-7 w-fit"
+        onPress={() => setShowLogs(value => !value)}
+      >
+        {showLogs ? t('preinstall.hide_details') : t('preinstall.show_details')}
+      </Button>
+      <If cond={showLogs}>
+        <LogPanel logs={logs} />
+      </If>
+    </div>
+  )
+}
+
 /** 被拒进程展示的精确版本清单：授权按精确 `包名@版本` 生效，因此原样展示 */
 function refusedVersions(process: PluginProcess): string {
   return (process.refusal?.versions ?? []).map(item => `${item.name}@${item.version}`).join('、')
@@ -487,6 +530,11 @@ export function PreinstallSetup() {
   // 未被点名的进程会回到 pending 等授权，若仍按「存在非 unauthorized 进程」判定，授权
   // 界面永远不会出现，用户只能取消。
   const installing = approvals.length === 0 && manager.processes.length > 0
+  // 本次提交要装的插件名（仅用于安装中的进度展示，不参与安装决策）。
+  const pendingTargets = preinstall.plugins
+    .filter(plugin => effectiveSelected.has(plugin.id) && !plugin.installed)
+    .map(plugin => plugin.name)
+
   const blocked = approvals.length > 0
   const failing = failures.length > 0
 
@@ -722,13 +770,13 @@ export function PreinstallSetup() {
             </If>
           )}
         >
-          {/* 安装中：spinner 在上、文案在下，图标旁不加文字 */}
+          {/* 安装中：讲清楚正在装什么，原始日志收起在「显示详细信息」后面 */}
           <div className="flex flex-col gap-2.5">
-            <div className="flex flex-col items-center gap-3">
-              <Spinner size="md" color="current" />
-              <p className="text-xs text-muted">{t('preinstall.installing')}</p>
-            </div>
-            <LogPanel logs={preinstall.logs} />
+            <InstallProgress
+              logs={preinstall.logs}
+              targets={pendingTargets}
+              title={t('preinstall.installing')}
+            />
             {/* 取消安装：网络抖动/限流（429）时可能长时间卡在重试，给用户退出入口 */}
             <div className="flex items-center justify-center">
               <Button

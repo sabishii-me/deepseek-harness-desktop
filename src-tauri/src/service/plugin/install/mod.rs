@@ -537,6 +537,8 @@ async fn install_with_cancel(
                 PREINSTALL_LOG_EVENT,
                 PreinstallLogPayload {
                     line: format!("[network] {network_hint}"),
+                    target: None,
+                    phase: None,
                 },
             );
             // network_hint 已带 NETWORK_ERROR: 前缀，直接返回避免双重前缀
@@ -548,6 +550,8 @@ async fn install_with_cancel(
                 PREINSTALL_LOG_EVENT,
                 PreinstallLogPayload {
                     line: format!("[pnpm] {hint}"),
+                    target: None,
+                    phase: None,
                 },
             );
             return Err(format!(
@@ -563,6 +567,8 @@ async fn install_with_cancel(
                 PREINSTALL_LOG_EVENT,
                 PreinstallLogPayload {
                     line: format!("[pnpm] {store_hint}"),
+                    target: None,
+                    phase: None,
                 },
             );
             return Err(format!(
@@ -613,6 +619,8 @@ async fn install_with_cancel(
         PREINSTALL_LOG_EVENT,
         PreinstallLogPayload {
             line: format!("[harness] 已安装 {} 个插件", targets.len()),
+            target: None,
+            phase: Some(crate::service::plugin::process::LogPhase::Done),
         },
     );
 
@@ -762,6 +770,8 @@ async fn run_plugin_with_allow_build_retry(
                 PREINSTALL_LOG_EVENT,
                 PreinstallLogPayload {
                     line: format!("[pnpm] 已放行插件构建（allowBuilds），重试{action}…"),
+                    target: None,
+                    phase: None,
                 },
             );
             continue;
@@ -832,6 +842,8 @@ async fn run_plugin_install_with_transient_retry(
                     line: format!(
                         "[harness] registry 元数据拉取失败，依赖校验未通过，正在重试（{policy_attempt}/{POLICY_VERIFICATION_RETRIES}）…"
                     ),
+                    target: None,
+                    phase: None,
                 },
             );
             if sleep_or_cancelled(delay, cancel).await {
@@ -857,6 +869,8 @@ async fn run_plugin_install_with_transient_retry(
                     line: format!(
                         "[harness] 插件安装遇到瞬时文件系统错误，正在重试（{attempt}/{TRANSIENT_FS_RETRIES}）…"
                     ),
+                    target: None,
+                    phase: None,
                 },
             );
             if sleep_or_cancelled(delay, cancel).await {

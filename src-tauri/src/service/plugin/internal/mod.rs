@@ -888,6 +888,8 @@ async fn ensure_inner(
                 PreinstallLogPayload {
                     line: "[harness] pnpm 无法回读新建的插件链接，改由应用直接建立链接…"
                         .to_string(),
+                    target: None,
+                    phase: None,
                 },
             );
             match materialize_internal_links(app_handle, &profile, &need) {

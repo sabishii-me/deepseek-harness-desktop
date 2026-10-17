@@ -267,7 +267,9 @@ pub(super) async fn ensure_plugin_entry_built(
                     "[pnpm] {id} 缺少构建产物（{}），正在补构建（{label}）…",
                     entry.display()
                 ),
-            },
+                    target: None,
+                    phase: None,
+                },
         );
         let mut full_args = pre_args.clone();
         full_args.extend(args.iter().map(|a| OsString::from(*a)));

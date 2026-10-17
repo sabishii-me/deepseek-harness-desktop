@@ -66,6 +66,8 @@ pub(super) async fn ensure_pnpm(
                     line: format!(
                         "[pnpm] no pnpm matches this profile's store major {store}; rebuilt the profile modules metadata for the pnpm in use"
                     ),
+                    target: None,
+                    phase: None,
                 },
             );
         }
@@ -98,7 +100,9 @@ pub(super) async fn ensure_pnpm(
         PREINSTALL_LOG_EVENT,
         PreinstallLogPayload {
             line: "[pnpm] bundled pnpm not found, downloading before plugin install".to_string(),
-        },
+                    target: None,
+                    phase: None,
+                },
     );
 
     let tracker = download::ProgressTracker::new(window, 2);
@@ -121,7 +125,9 @@ pub(super) async fn ensure_pnpm(
         PREINSTALL_LOG_EVENT,
         PreinstallLogPayload {
             line: "[pnpm] bundled pnpm ready".to_string(),
-        },
+                    target: None,
+                    phase: None,
+                },
     );
     Ok(true)
 }

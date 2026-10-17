@@ -26,14 +26,6 @@ pub struct Setting {
     /// 命令行集成开关：安装后在用户 PATH 中注册 `dsh` 命令
     #[serde(default = "default_cli_link_enabled")]
     pub cli_link_enabled: bool,
-    /// 预装插件引导是否已完成（确认安装或跳过都算完成，之后不再弹出）
-    #[serde(default)]
-    pub preinstall_done: bool,
-    /// 上次引导结束时的清单 `plugins` 节内容指纹。资源清单每次安装都会被
-    /// 强制覆盖、旧文件不复存在，只能把「上次看到的内容」记在这里，每次启动再比对：
-    /// 内容有变更 → 重新进入预设引导。`None` = 老用户升级（无基线）→ 弹一次建立基线。
-    #[serde(default)]
-    pub preset_hash: Option<String>,
     /// 当前使用的档案 id（`$DSH_HOME/profiles/<id>`，默认 web）。
     /// 桌面端启动服务与插件管理都以它为准（见 service::profile）。
     /// 老用户 store 里可能仍是旧引导档案名 `desktop`：启动迁移
@@ -204,8 +196,6 @@ impl Default for Setting {
             dsh_pkg_commit: None,
             dsh_pkg_tag: None,
             cli_link_enabled: default_cli_link_enabled(),
-            preinstall_done: false,
-            preset_hash: None,
             active_profile: default_active_profile(),
             desktop_profile_ready: false,
             active_core: None,
@@ -572,7 +562,6 @@ mod tests {
                 "active_core": "app",
                 "dsh_pkg_commit": "saved-core",
                 "dsh_pkg_tag": "saved-release",
-                "preinstall_done": true,
                 "desktop_profile_ready": true,
                 "cli_link_enabled": false,
                 "harness_max_heap_mb": 2048,

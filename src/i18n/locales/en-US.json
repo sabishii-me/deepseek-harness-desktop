@@ -705,6 +705,8 @@
     "remote_waiting": "Waiting for authorization…",
     "remote_signing_in": "Signing in…",
     "remote_sign_in": "Sign in",
-    "remote_failed": "Sign-in failed"
+    "remote_failed": "Sign-in failed",
+    "show_details": "Show details",
+    "hide_details": "Hide details"
   }
 }

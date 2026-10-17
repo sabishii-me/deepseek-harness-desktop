@@ -25,10 +25,39 @@ use std::process::{Command, Stdio};
 pub(crate) const PREINSTALL_LOG_EVENT: &str = "preinstall-log";
 
 /// 进程输出行事件载荷
+///
+/// `line` 始终是原始输出；`target`/`phase` 是**可选**的结构化补充，用于让界面把
+/// 一长串日志呈现成「哪个包、到哪一步」，而不是一整块控制台文本。两者缺省时
+/// 界面退化为纯日志——协议因此向后兼容，不要求所有产生方都填。
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreinstallLogPayload {
     pub line: String,
+    /// 该行归属的安装目标（插件 id 或内核 id）；批量安装且无法归属时缺省。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// 里程碑阶段：整批开始/结束、或单个目标开始/失败。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase: Option<LogPhase>,
+}
+
+/// 与界面约定的里程碑阶段；普通输出行不带阶段。
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogPhase {
+    /// 整批任务开始。
+    Start,
+    /// 整批任务成功结束。
+    Done,
+    /// 任务失败。
+    Fail,
+}
+
+impl PreinstallLogPayload {
+    /// 纯日志行（不带结构化信息）。
+    pub(crate) fn line(line: impl Into<String>) -> Self {
+        Self { line: line.into(), target: None, phase: None }
+    }
 }
 
 /// 当前正在运行的 `dsh plugin` 子进程 PID（无进行中安装时为 None）。
@@ -450,7 +479,9 @@ fn spawn_line_emitter<R: Read + Send + 'static>(
                         PREINSTALL_LOG_EVENT,
                         PreinstallLogPayload {
                             line: trimmed.clone(),
-                        },
+                    target: None,
+                    phase: None,
+                },
                     );
                     if let Ok(mut acc) = captured.lock() {
                         acc.push_str(&trimmed);

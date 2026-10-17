@@ -5,15 +5,6 @@ use crate::service::{plugin, workflow::instances};
 use tauri::{AppHandle, WebviewWindow};
 use tauri_plugin_opener::OpenerExt;
 
-fn mark_preinstall_done(app_handle: &AppHandle) {
-    let mut setting = config::get_store_dat_setting(app_handle);
-    setting.preinstall_done = true;
-    if let Some(hash) = plugin::current_preset_hash(app_handle) {
-        setting.preset_hash = Some(hash);
-    }
-    config::set_store_dat_setting(app_handle, setting);
-}
-
 #[tauri::command]
 pub async fn get_preinstall_plugins(
     app_handle: AppHandle,
@@ -38,7 +29,8 @@ pub async fn install_preinstall_plugins(
         if !install_ids.is_empty() {
             plugin::install(&app_handle, &install_ids).await?;
         }
-        mark_preinstall_done(&app_handle);
+        // 引导进度由 `complete_onboarding_step` 逐步骤记录（见 bridge::onboarding），
+        // 这里不再写一次性标记：那会把「所有步骤」压成一个布尔，加步骤就失效。
         Ok(())
     })
     .await
@@ -142,11 +134,7 @@ pub async fn skip_preinstall_plugins(
     window: WebviewWindow,
 ) -> Result<(), String> {
     let profile = instances::window_profile(&app_handle, window.label());
-    instances::scope(profile, async {
-        mark_preinstall_done(&app_handle);
-        Ok(())
-    })
-    .await
+    instances::scope(profile, async { Ok(()) }).await
 }
 
 #[tauri::command]

@@ -544,24 +544,22 @@ pub(crate) fn current_preset_hash(app_handle: &AppHandle) -> Option<String> {
     Some(format!("{:016x}", fnv1a(canonical.as_bytes())))
 }
 
-/// 是否需要进入预装插件引导：
-/// - 引导从未完成（首启/中途退出）→ 需要
-/// - 老用户升级无指纹基线（文件在）→ 弹一次建立基线
-/// - 有基线且内容已变更 → 需要
-/// - 文件缺失视为无变化，避免每次启动都弹空引导
+/// 是否需要进入首次启动引导。
+///
+/// 判据完全来自声明式进度：清单里声明了步骤、且尚未全部完成 → 需要。
+/// 没有任何声明步骤时**不需要**——没配置引导就没有引导。曾经用过的
+/// 「一次性布尔 + 清单指纹」两个字段因此不再参与判断：新增步骤时旧用户会
+/// 自然处于未完成态，这正是步骤集合比布尔更准确的地方。
 pub(crate) fn preinstall_pending(app_handle: &AppHandle) -> bool {
-    let setting = config::get_store_dat_setting(app_handle);
-    if !setting.preinstall_done {
-        return true;
+    let Some(manifest) = config::manifest::read(app_handle) else {
+        return false;
+    };
+    let steps = &manifest.onboarding.steps;
+    if steps.is_empty() {
+        return false;
     }
-    match (
-        setting.preset_hash.as_deref(),
-        current_preset_hash(app_handle),
-    ) {
-        (None, Some(_)) => true,
-        (Some(prev), Some(cur)) => prev != cur,
-        _ => false,
-    }
+    let state = crate::config::onboarding::read_state(app_handle);
+    !steps.iter().all(|step| state.is_completed(&step.id))
 }
 
 #[cfg(test)]
@@ -1014,35 +1012,43 @@ mod tests {
     }
 
     #[test]
-    fn pending_decision_matrix() {
-        // 未完成引导 → 一定需要
-        assert!(preinstall_pending_for_test(false, None, Some("h1")));
-        assert!(preinstall_pending_for_test(false, Some("h1"), Some("h1")));
-        // 老用户升级：无基线且文件在 → 弹一次建立基线
-        assert!(preinstall_pending_for_test(true, None, Some("h1")));
-        // 基线一致 → 不弹
-        assert!(!preinstall_pending_for_test(true, Some("h1"), Some("h1")));
-        // 内容变更 → 弹
-        assert!(preinstall_pending_for_test(true, Some("h1"), Some("h2")));
-        // 文件缺失：视为无变化不弹（有基线或老用户都不弹）
-        assert!(!preinstall_pending_for_test(true, Some("h1"), None));
-        assert!(!preinstall_pending_for_test(true, None, None));
-    }
-
-    /// 纯函数版 pending 判定（便于单测，不依赖 AppHandle）
-    fn preinstall_pending_for_test(
-        preinstall_done: bool,
-        recorded: Option<&str>,
-        current: Option<&str>,
-    ) -> bool {
-        if !preinstall_done {
-            return true;
+    fn pending_decision_follows_declared_steps() {
+        // 判据只看「声明了哪些步骤、完成到哪」——不再有一次性布尔与清单指纹。
+        use crate::config::onboarding::{OnboardingKind, OnboardingSection, OnboardingState, OnboardingStep};
+        fn section(ids: &[&str]) -> OnboardingSection {
+            OnboardingSection {
+                steps: ids
+                    .iter()
+                    .map(|id| OnboardingStep {
+                        id: (*id).to_string(),
+                        kind: OnboardingKind::PluginSelection,
+                        title: (*id).to_string(),
+                        optional: true,
+                        remote: None,
+                    })
+                    .collect(),
+            }
         }
-        match (recorded, current) {
-            (None, Some(_)) => true,
-            (Some(prev), Some(cur)) => prev != cur,
-            _ => false,
+        fn pending(section: &OnboardingSection, completed: &[&str]) -> bool {
+            if section.steps.is_empty() {
+                return false;
+            }
+            let state = OnboardingState {
+                completed: completed.iter().map(|id| (*id).to_string()).collect(),
+                ..OnboardingState::default()
+            };
+            !section.steps.iter().all(|step| state.is_completed(&step.id))
         }
+        // 没声明步骤 → 没有引导
+        assert!(!pending(&section(&[]), &[]));
+        // 有步骤、一个都没做 → 需要
+        assert!(pending(&section(&["a", "b"]), &[]));
+        // 只做了一部分 → 需要
+        assert!(pending(&section(&["a", "b"]), &["a"]));
+        // 全部完成 → 不需要
+        assert!(!pending(&section(&["a", "b"]), &["a", "b"]));
+        // 新增步骤后旧进度自动重新待办（这是步骤集合相对布尔的优势）
+        assert!(pending(&section(&["a", "b", "c"]), &["a", "b"]));
     }
 
     /// 写入一个带 `dsh` 对象的开发包 manifest。
