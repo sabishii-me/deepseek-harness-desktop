@@ -61,6 +61,9 @@ pub(crate) use install::harness_prefer_bundled_pnpm;
 pub(crate) use install::local_spec_from_path;
 pub(crate) use install::uninstall_deprecated_plugins;
 pub(crate) use install::packument;
+pub(crate) use process::new_process_owner;
+pub(crate) use install::build_plugin_envs;
+pub(crate) use install::run_plugin_install_with_transient_retry;
 pub use install::{
     allow_policy_versions, allow_version_exemptions, inspect_specs, install, install_specs,
     remove_many, update_many, IncompatibleVersion, PolicyBlockedVersion,

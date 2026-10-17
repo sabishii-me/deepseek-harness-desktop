@@ -317,18 +317,31 @@
           "read": "getState",
           "pollMs": 1500,
           "done": { "path": "phase", "equals": "ready" },
+          // 状态标题：按 phase 的当前值在这张表里查；查不到就不显示标题。
+          // 表的键值全部是配置，宿主不认识 signed-out / waiting 这些字面量。
+          "statusPath": "phase",
+          "states": [
+            { "value": "signed-out", "label": "preinstall.state_signed_out" },
+            { "value": "waiting", "label": "preinstall.state_waiting" },
+            { "value": "ready", "label": "preinstall.state_ready" },
+            { "value": "error", "label": "preinstall.state_error" }
+          ],
           "fields": [
-            { "path": "organization" },
             {
               "showWhen": { "path": "phase", "equals": "waiting" },
               "path": "code",
-              "label": "preinstall.remote_code"
+              "label": "preinstall.remote_code",
+              "copy": true
             },
             {
               "showWhen": { "path": "phase", "equals": "waiting" },
               "path": "url",
-              "label": "preinstall.remote_link",
-              "copy": true
+              "open": true
+            },
+            {
+              "showWhen": { "path": "phase", "equals": "ready" },
+              "path": "organization",
+              "label": "preinstall.remote_account"
             },
             {
               "showWhen": { "path": "phase", "equals": "ready" },

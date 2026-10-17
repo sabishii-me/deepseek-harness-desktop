@@ -51,6 +51,7 @@ pub struct RemoteCondition {
 
 /// 卡片正文的一行。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RemoteField {
     /// 何时显示；缺省 = 总是显示。
     #[serde(default)]
@@ -63,10 +64,14 @@ pub struct RemoteField {
     /// 是否附带「复制」按钮（用于授权链接这类值）。
     #[serde(default)]
     pub copy: bool,
+    /// 该值是否是一个可打开的目标（渲染成按钮，而不是铺裸 URL）。
+    #[serde(default)]
+    pub open: bool,
 }
 
 /// 卡片内的一颗按钮。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RemoteAction {
     /// 何时显示；缺省 = 总是显示。
     #[serde(default)]
@@ -77,12 +82,24 @@ pub struct RemoteAction {
     pub label: String,
 }
 
+/// 一个状态的展示：状态值 → 标题文案。
+///
+/// 宿主不认识具体值，只按 `status_path` 取到的字符串在这里查表。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteStateView {
+    pub value: String,
+    /// 标题文案的 i18n key。
+    pub label: String,
+}
+
 /// `remote-call` 步骤的完整描述。
 ///
 /// 宿主只执行三条原语：**取值**（`read`）→ **比较**（`done` / `showWhen`）→ **渲染**
 /// （`fields`）或 **调用**（`actions`）。它不理解任何具体业务状态，因此换一个
 /// provider（OAuth 设备授权、轮询某种就绪标志、……）只需改配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RemoteCallSpec {
     /// Remote 命名空间，纯字符串透传。
     pub namespace: String,
@@ -90,6 +107,12 @@ pub struct RemoteCallSpec {
     pub read: String,
     /// 完成判定：比较为真即本步完成。
     pub done: RemoteCondition,
+    /// 状态值取自哪个单层字段；缺省时不显示状态标题。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_path: Option<String>,
+    /// 状态值 → 标题文案 i18n key。
+    #[serde(default)]
+    pub states: Vec<RemoteStateView>,
     /// 卡片正文行，按顺序渲染。
     #[serde(default)]
     pub fields: Vec<RemoteField>,
@@ -239,6 +262,47 @@ pub fn write_state_at(path: &Path, state: &OnboardingState) -> Result<(), String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 序列化给界面的字段名必须是 camelCase。
+    ///
+    /// 这个契约一旦破了不会报错：界面读到 `undefined` 后所有 `showWhen` 判定都为假，
+    /// 于是「条件显隐」整体失效——表现为每一行都渲染、每一颗按钮都出现。曾经就是
+    /// 因为漏了 `rename_all` 让一张授权卡片变成了一张空表格。
+    #[test]
+    fn remote_spec_serializes_with_camel_case_keys() {
+        let spec = RemoteCallSpec {
+            namespace: "any-namespace".to_string(),
+            read: "readState".to_string(),
+            done: RemoteCondition { path: "s".to_string(), equals: "ok".to_string() },
+            status_path: Some("s".to_string()),
+            states: vec![RemoteStateView {
+                value: "idle".to_string(),
+                label: "any.state_idle".to_string(),
+            }],
+            fields: vec![RemoteField {
+                show_when: Some(RemoteCondition { path: "s".to_string(), equals: "idle".to_string() }),
+                path: "code".to_string(),
+                label: Some("any.code".to_string()),
+                copy: true,
+                open: false,
+            }],
+            actions: vec![RemoteAction {
+                show_when: None,
+                method: "begin".to_string(),
+                label: "any.begin".to_string(),
+            }],
+            poll_ms: Some(1500),
+        };
+        let json = serde_json::to_string(&spec).unwrap();
+        for expected in ["\"statusPath\"", "\"pollMs\"", "\"showWhen\"", "\"path\"", "\"equals\""] {
+            assert!(json.contains(expected), "missing {expected} in {json}");
+        }
+        // snake_case 泄漏即前端读不到。
+        for forbidden in ["\"status_path\"", "\"poll_ms\"", "\"show_when\""] {
+            assert!(!json.contains(forbidden), "leaked {forbidden} in {json}");
+        }
+    }
+
 
     fn section(ids: &[&str]) -> OnboardingSection {
         OnboardingSection {

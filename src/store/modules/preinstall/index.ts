@@ -2,6 +2,8 @@ export { parseBlockedRefusal, preinstall } from './store'
 export type { BlockedRefusal } from './store'
 export type {
   IncompatibleVersion,
+  KernelPhase,
+  KernelSource,
   OnboardingKind,
   OnboardingRemoteState,
   OnboardingStep,

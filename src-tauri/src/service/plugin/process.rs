@@ -351,6 +351,8 @@ pub(crate) async fn run_plugin_process(
     envs: &HashMap<String, String>,
     window: &WebviewWindow,
     owner: ProcessOwner,
+    // 这些输出行归属的对象 id（插件/内核各一张卡片）。None = 无归属，界面只进日志层。
+    target: Option<String>,
 ) -> Result<(i32, String), String> {
     let profile = crate::service::profile::active_profile(window.app_handle());
     let process_guard = acquire_process_lock().await?;
@@ -364,8 +366,8 @@ pub(crate) async fn run_plugin_process(
         let pid_guard = PidGuard::set(owner, pid);
         log::info!("dsh plugin install started, pid {pid}");
 
-        spawn_line_emitter(stdout, window.clone(), captured.clone());
-        spawn_line_emitter(stderr, window.clone(), captured.clone());
+        spawn_line_emitter(stdout, window.clone(), captured.clone(), target.clone());
+        spawn_line_emitter(stderr, window.clone(), captured.clone(), target.clone());
 
         let handle = WaitableHandle(handle);
         let exit_code = tauri::async_runtime::spawn_blocking(move || {
@@ -418,10 +420,10 @@ pub(crate) async fn run_plugin_process(
         log::info!("dsh plugin install started, pid {pid}");
 
         if let Some(stdout) = child.stdout.take() {
-            spawn_line_emitter(stdout, window.clone(), captured.clone());
+            spawn_line_emitter(stdout, window.clone(), captured.clone(), target.clone());
         }
         if let Some(stderr) = child.stderr.take() {
-            spawn_line_emitter(stderr, window.clone(), captured.clone());
+            spawn_line_emitter(stderr, window.clone(), captured.clone(), target.clone());
         }
 
         let exit_code = tauri::async_runtime::spawn_blocking(move || {
@@ -454,6 +456,7 @@ fn spawn_line_emitter<R: Read + Send + 'static>(
     reader: R,
     window: WebviewWindow,
     captured: Arc<Mutex<String>>,
+    target: Option<String>,
 ) {
     std::thread::spawn(move || {
         let mut buf = BufReader::new(reader);

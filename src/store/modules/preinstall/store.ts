@@ -1,5 +1,5 @@
 import type { UnlistenFn } from '@tauri-apps/api/event'
-import type { IncompatibleVersion, OnboardingStep, OnboardingView, PolicyBlockedVersion, PreinstallKernel, PreinstallLogPayload, PreinstallPlugin, PreinstallSelection } from './types'
+import type { IncompatibleVersion, KernelPhase, OnboardingStep, OnboardingView, PolicyBlockedVersion, PreinstallKernel, PreinstallLogPayload, PreinstallPlugin, PreinstallSelection } from './types'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import i18next from 'i18next'
@@ -58,7 +58,8 @@ export const preinstall = defineStore({
     /** 清单声明的可选内核及托管状态 */
     kernels: [] as PreinstallKernel[],
     /** 正在安装的内核 id（null = 未进行） */
-    kernelInstalling: null as string | null,
+    /** 每个内核各自的安装阶段（卡片内进度层）；未在装的不出现在表里。 */
+    kernelPhases: {} as Record<string, KernelPhase>,
     /**
      * 引导是否仍未结束（清单步骤未全部完成）。
      *
@@ -66,6 +67,16 @@ export const preinstall = defineStore({
      * 全部完成后置 false，之后启动不再出现（除非配置新增步骤）。
      */
     flowPending: false,
+    /**
+     * 本次启动里是否展示过引导（一旦为 true 就保持到进程退出）。
+     *
+     * 与 `flowPending` 的区别：`flowPending` 是「还没问完」，收尾后立刻变 false；
+     * 这个标记是「这次启动已经问过了」，用来抑制 iframe 内的 settings.onboarding。
+     * 用户在我们的第三步选了不登录，也不该在同一个启动里被再问一遍。
+     * 下次启动不再展示引导时，这个标记保持 false，核心自己的就绪判定照常生效
+     * （例如用户之后删光模型适配器，核心仍会重新要求配置）。
+     */
+    showedOnboarding: false,
   }),
   actions: {
     /** 拉取预装插件列表（含已安装检测），供首次启动引导界面渲染 */    async load(): Promise<PreinstallPlugin[]> {
@@ -111,9 +122,10 @@ export const preinstall = defineStore({
      * 内核是可选步骤：失败只停留在本步，不影响插件安装结果，用户可重试或继续。
      */
     async installKernel(id: string): Promise<boolean> {
-      if (this.kernelInstalling !== null)
+      if (this.kernelPhases[id] !== undefined)
         return false
-      this.kernelInstalling = id
+      // 每个内核各自一个阶段槽：并装多个时互不覆盖。
+      this.kernelPhases = { ...this.kernelPhases, [id]: 'resolving' }
       this.error = ''
       this.logs = []
       let unlisten: UnlistenFn | null = null
@@ -130,7 +142,9 @@ export const preinstall = defineStore({
       }
       finally {
         unlisten?.()
-        this.kernelInstalling = null
+        const next = { ...this.kernelPhases }
+        delete next[id]
+        this.kernelPhases = next
       }
     },
 
@@ -181,6 +195,8 @@ export const preinstall = defineStore({
      */
     syncFlow(view: OnboardingView | null): void {
       this.flowPending = view !== null && view.steps.length > 0 && !view.finished
+      if (this.flowPending)
+        this.showedOnboarding = true
     },
 
     /** 拉取引导配置与进度。 */
@@ -237,6 +253,12 @@ export const preinstall = defineStore({
     async listenLog(): Promise<UnlistenFn> {
       return listen<PreinstallLogPayload>('preinstall-log', (e) => {
         this.pushLog(e.payload.line)
+        // 带 target 且带过程阶段的行，同时更新那张卡片的进度层。
+        // 日志层与进度层是两个消费方，同一事件喂两边：日志永远完整，
+        // 卡片内只显示状态词。
+        const { target, phase } = e.payload
+        if (target !== undefined && phase !== undefined && this.kernelPhases[target] !== undefined)
+          this.kernelPhases = { ...this.kernelPhases, [target]: phase as KernelPhase }
       })
     },
 

@@ -725,14 +725,14 @@ async fn run_plugin_command(
     let cwd = crate::service::core::active_core_dir(app_handle);
     log::info!("Running dsh plugin {action} for {ids:?}");
     let (exit_code, output, last_attempt) = run_plugin_with_allow_build_retry(
-        app_handle, &node, &args, &cwd, &envs, &window, action, None, owner,
+        app_handle, &node, &args, &cwd, &envs, &window, action, None, owner, None,
     )
     .await?;
 
     let (exit_code, output, last_attempt) =
         if exit_code != 0 && super::heal_locked_release_age(&profile_path, &last_attempt) {
             run_plugin_with_allow_build_retry(
-                app_handle, &node, &args, &cwd, &envs, &window, action, None, owner,
+                app_handle, &node, &args, &cwd, &envs, &window, action, None, owner, None,
             )
             .await?
         } else {

@@ -228,9 +228,15 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
 
   // 壳层引导结束（或重新打开）时同步给帧内：只在 onLoad 推的话，帧已加载完、
   // 不会再触发 onLoad，帧内就会一直沿用旧值。
-  const flowPending = useStore(store.preinstall)?.flowPending === true
-  useWatch([flowPending], () => {
-    post({ type: 'dsh://onboarding:allow', allow: !flowPending })
+  //
+  // 抑制条件是「**这次启动问过引导**」，不是「此刻还没问完」：
+  // 我们的流程只在首次启动出现，第三步已经问过要不要登录；用户选不登录之后
+  // 再把同一个问题弹一次就是重复打扰。而**没有**展示引导的启动（非首次、
+  // 或用户之前已完成全部步骤）照常交给核心判定——例如删光模型适配器后核心
+  // 重新要求配置，那一步仍然会发生。
+  const showedOnboarding = useStore(store.preinstall)?.showedOnboarding === true
+  useWatch([showedOnboarding], () => {
+    post({ type: 'dsh://onboarding:allow', allow: !showedOnboarding })
   })
   // 握手兜底：帧内接收器异常时不能让 iframe 永久藏住，超时后按「未确认」直接揭开。
   const appearancePending = translucent && bootFrame !== frameKey
@@ -631,11 +637,10 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
             store.harness.markIframeLoaded()
             if (remoteMode)
               setLoadedUrl(srcOverride)
-            // 告诉帧内：此刻是否仍处于壳层全屏引导。帧内据此决定要不要再弹自己的
-            // onboarding 步骤——同一段时间里只该有一套引导。引导结束后再推一次。
+            // 告诉帧内：这次启动是否已经问过引导（见上方 useWatch 的说明）。
             post({
               type: 'dsh://onboarding:allow',
-              allow: !store.preinstall.flowPending,
+              allow: !store.preinstall.showedOnboarding,
             })
           }}
           onError={store.harness.markIframeError}

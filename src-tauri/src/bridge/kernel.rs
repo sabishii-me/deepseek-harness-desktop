@@ -29,6 +29,8 @@ pub struct KernelDescriptor {
     pub version: Option<String>,
     pub installed: bool,
     pub detected_version: Option<String>,
+    /// 命中来源（managed / profile / system）；未安装时为 None。
+    pub source: Option<crate::service::kernel::install::KernelSource>,
 }
 
 /// 清单声明的全部可选内核及其托管状态（只读）。
@@ -58,6 +60,7 @@ pub async fn get_native_kernels(app_handle: AppHandle) -> Result<Vec<KernelDescr
             version: kernel.version,
             installed: state.installed,
             detected_version: state.version,
+            source: state.source,
         });
     }
     Ok(out)
@@ -86,10 +89,31 @@ pub async fn install_native_kernel_by_id(
             expect: kernel.probe.expect,
         },
     };
+    let emit_window = window.clone();
+    let emit_target = id.clone();
+
+    // 阶段事件：卡片内的进度层。阶段是真实里程碑，不是按输出猜的百分比。
+    let phase = |name: &str| {
+        let _ = emit_window.emit(PROGRESS_EVENT, serde_json::json!({
+            "line": "",
+            "target": emit_target,
+            "phase": name,
+        }));
+    };
+
+    let sink_window = window.clone();
+    let sink_target = id.clone();
     let sink: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |line: &str| {
-        let _ = window.emit(PROGRESS_EVENT, serde_json::json!({ "line": line }));
+        let _ = sink_window.emit(PROGRESS_EVENT, serde_json::json!({
+            "line": line,
+            "target": sink_target,
+        }));
     });
-    install_native_kernel(&app_handle, &spec, Some(sink)).await
+
+    phase("resolving");
+    let result = install_native_kernel(&app_handle, &window, &spec, Some(sink), Some(id)).await;
+    phase(if result.is_ok() { "ready" } else { "failed" });
+    result
 }
 
 /// 查询某内核的托管安装状态（只读，不触发安装）。
@@ -108,8 +132,9 @@ pub async fn install_native_kernel_package(
     window: WebviewWindow,
     spec: NativeKernelSpec,
 ) -> Result<NativeKernelState, String> {
+    let emit_window = window.clone();
     let sink: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |line: &str| {
-        let _ = window.emit(PROGRESS_EVENT, serde_json::json!({ "line": line }));
+        let _ = emit_window.emit(PROGRESS_EVENT, serde_json::json!({ "line": line }));
     });
-    install_native_kernel(&app_handle, &spec, Some(sink)).await
+    install_native_kernel(&app_handle, &window, &spec, Some(sink), None).await
 }

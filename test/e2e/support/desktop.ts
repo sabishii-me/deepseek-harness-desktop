@@ -1,6 +1,6 @@
 import type { Buffer } from 'node:buffer'
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -29,8 +29,27 @@ export const APP_TITLE = 'DSH Tauri'
  */
 export const MAIN_WEBVIEW = 'main'
 
-/** 残留实例的进程名（与 Cargo 主二进制一致）。 */
-const APP_PROCESS_NAME = 'deepseek-harness-desktop'
+/**
+ * 残留实例的进程名（与 Cargo 主二进制一致）。
+ *
+ * 从 `tauri.conf.json` 的 `mainBinaryName` 读，不写死：产品名/二进制名属于壳层标识，
+ * 改名时不该再连带打断整条 E2E 车道。缺省回落到 Cargo 包名。
+ */
+const APP_PROCESS_NAME = readMainBinaryName()
+
+/** 从 `tauri.conf.json` 读主二进制名；读不到时用 Cargo 包名。 */
+function readMainBinaryName(): string {
+  const configPath = join(REPO_ROOT, 'src-tauri', 'tauri.conf.json')
+  try {
+    const config = JSON.parse(readFileSync(configPath, 'utf8')) as { mainBinaryName?: unknown }
+    if (typeof config.mainBinaryName === 'string' && config.mainBinaryName.trim() !== '')
+      return config.mainBinaryName.trim()
+  }
+  catch {
+    // 配置不可读时用默认名，让前置校验报出真正的问题（二进制缺失）而非配置解析。
+  }
+  return 'deepseek-harness-desktop'
+}
 
 /** E2E 模式下的 Store 文件名（`config::setting::store_dat_file_name` 的测试分支）。 */
 const TEST_STORE_FILE = '.store.test.dat'

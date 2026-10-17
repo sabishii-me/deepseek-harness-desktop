@@ -9,6 +9,9 @@
  * 与 Rust `config::onboarding` 对齐。
  */
 
+/** 内核安装的过程阶段（卡片内的进度层，与日志层分开）。 */
+export type KernelPhase = 'resolving' | 'downloading' | 'verifying' | 'ready'
+
 /** 宿主支持的通用步骤动作类型（与 Rust `OnboardingKind` 对齐）。 */
 export type OnboardingKind = 'plugin-selection' | 'native-kernel' | 'remote-call'
 
@@ -27,6 +30,8 @@ export interface RemoteField {
   label?: string
   /** 是否附带「复制」按钮。 */
   copy?: boolean
+  /** 该值是否是一个可打开的目标（渲染成按钮，而不是铺裸 URL）。 */
+  open?: boolean
 }
 
 /** 卡片内的一颗按钮（与 Rust `RemoteAction` 对齐）。 */
@@ -44,10 +49,26 @@ export interface RemoteAction {
  * 宿主只做：取值（`read`）→ 比较（`done` / `showWhen`）→ 渲染或调用。
  * 不认识任何具体业务状态。
  */
+/**
+ * 一个状态的展示：状态值 → 标题文案。
+ *
+ * 宿主只按 `read` 返回对象里的 `status.path` 值查这张表；查不到时回退到
+ * 通用「处理中」文案。表里有什么状态、叫什么，全部由配置决定。
+ */
+export interface RemoteStateView {
+  value: string
+  /** 标题文案的 i18n key。 */
+  label: string
+}
+
 export interface RemoteCallSpec {
   namespace: string
   read: string
   done: RemoteCondition
+  /** 状态值取自哪个字段（单层字段名）。缺省时不显示状态标题。 */
+  statusPath?: string
+  /** 状态值 → 标题。 */
+  states?: RemoteStateView[]
   fields?: RemoteField[]
   actions?: RemoteAction[]
   /** 轮询间隔（毫秒），缺省 1500。 */
@@ -95,8 +116,13 @@ export interface PreinstallLogPayload {
   line: string
   /** 该行归属的插件或内核 id；宿主无法判定时缺省。 */
   target?: string
-  /** 里程碑阶段：`start` 开始、`done` 完成、`fail` 失败；普通输出行缺省。 */
-  phase?: 'start' | 'done' | 'fail'
+  /**
+   * 里程碑阶段；普通输出行缺省。
+   *
+   * 通用阶段名，宿主不认识具体业务：`start` / `done` / `fail` 三类终态，
+   * `resolving` / `downloading` / `verifying` 三类过程（目前只有内核安装发）。
+   */
+  phase?: KernelPhase | 'start' | 'done' | 'fail'
 }
 
 /** 预装插件列表项（与 Rust service::plugin::PreinstallPlugin 对齐） */
@@ -117,6 +143,9 @@ export interface PreinstallPlugin {
 }
 
 /** 清单声明的一个可选内核及其托管状态（与 Rust `KernelDescriptor` 对齐）。 */
+/** 内核被找到的位置（与 Rust `KernelSource` 对齐）。 */
+export type KernelSource = 'managed' | 'profile' | 'system'
+
 export interface PreinstallKernel {
   id: string
   name: string
@@ -124,6 +153,8 @@ export interface PreinstallKernel {
   version: string | null
   installed: boolean
   detectedVersion: string | null
+  /** 命中来源；未安装时为 null。只作为副行说明，不让用户做选择。 */
+  source?: KernelSource | null
 }
 
 /** 预装插件的安装/卸载 diff（前端比对勾选结果得出） */

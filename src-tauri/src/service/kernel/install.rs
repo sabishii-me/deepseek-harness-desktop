@@ -11,6 +11,7 @@
 //!
 //! 安装根使用通用槽位 `dependencies/kernels/<package>`，与该包是否由用户自装无关。
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -19,16 +20,10 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use tokio::process::Command;
-use tokio::sync::Mutex;
 
 use crate::config::get_node_binary_path;
 use crate::service::core::runtime::npm_command;
 
-/// 同一时刻只允许一次内核安装（跨内核串行，避免并发 npm 争用同一运行时）。
-static INSTALL: Mutex<()> = Mutex::const_new(());
-
-/// 单个内核的安装超时（网络受限时 npm 可能长时间重试）。
-const INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
 /// 安装后探测入口的超时。
 const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -76,13 +71,69 @@ pub struct NativeKernelProbe {
 /// 安装 / 探测结果。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct NativeKernelState {    /// 托管安装是否已就绪（入口存在且通过探测）。
+pub struct NativeKernelState {
+    /// 是否已就绪（入口存在且通过探测）。任一来源命中即为 true。
     pub installed: bool,
+    /// 命中的来源；未就绪时为 None。
+    pub source: Option<KernelSource>,
     /// 已就绪入口的绝对路径（未就绪时为 None）。
     pub entry: Option<String>,
     /// 探测输出中识别到的版本号（可无）。
     pub version: Option<String>,
 }
+/// 内核来源：同一套探测会按顺序尝试三处，先命中的胜出。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum KernelSource {
+    /// 应用托管槽位（`dependencies/kernels/<pkg>`）。
+    Managed,
+    /// 当前 DSH 档案的 `node_modules`。
+    Profile,
+    /// 系统全局 npm 根。
+    System,
+}
+
+/// 系统全局 npm 根（`npm root -g` 的输出）。
+///
+/// 不自建包发现逻辑：复用用户环境的 npm 来回答「全局包在哪」，避免在 Windows /
+/// Unix / nvm / pnpm / volta 等布局上各自猜测。命令失败时返回 None，探测继续。
+async fn system_npm_root(node: &Path) -> Option<PathBuf> {
+    let (program, args) = npm_command(node);
+    let mut command = tokio::process::Command::new(&program);
+    command
+        .args(&args)
+        .arg("root")
+        .arg("-g")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    let output = tokio::time::timeout(PROBE_TIMEOUT, command.output())
+        .await
+        .ok()?
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if text.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(text))
+    }
+}
+
+/// 包名在 `node_modules` 下的相对目录（`@scope/name` → `@scope/name`）。
+fn package_subdir(package: &str) -> PathBuf {
+    let mut path = PathBuf::new();
+    for part in package.split(['/', '\\']).filter(|part| !part.is_empty()) {
+        path.push(part);
+    }
+    path
+}
+
 
 /// 判断给定入口是否可运行：跑 `probe.args`，校验退出码与输出片段。
 async fn probe_entry(node: &Path, entry: &Path, probe: &NativeKernelProbe) -> Option<NativeKernelState> {
@@ -111,6 +162,7 @@ async fn probe_entry(node: &Path, entry: &Path, probe: &NativeKernelProbe) -> Op
     }
     Some(NativeKernelState {
         installed: true,
+        source: None,
         entry: Some(entry.to_string_lossy().into_owned()),
         version: extract_version(&text),
     })
@@ -167,15 +219,40 @@ pub async fn native_kernel_state(
     app: &AppHandle,
     spec: &NativeKernelSpec,
 ) -> NativeKernelState {
-    let entry = package_dir(app, spec).join(&spec.entry);
     let node = get_node_binary_path(app);
-    match probe_entry(&node, &entry, &spec.probe).await {
-        Some(state) => state,
-        None => NativeKernelState {
-            installed: false,
-            entry: None,
-            version: None,
-        },
+
+    // 三个来源依次尝试，先命中的胜出：应用托管 > DSH 档案 > 系统全局。
+    // 每一处都跑**同一个协议探测**（不是看文件存不存在），装坏的包不算已装。
+    let mut candidates: Vec<(KernelSource, PathBuf)> = Vec::new();
+    candidates.push((KernelSource::Managed, package_dir(app, spec)));
+    candidates.push((
+        KernelSource::Profile,
+        crate::service::plugin::profile_dir(app)
+            .join("node_modules")
+            .join(package_subdir(&spec.package)),
+    ));
+
+    for (source, dir) in candidates {
+        let entry = dir.join(&spec.entry);
+        if let Some(mut state) = probe_entry(&node, &entry, &spec.probe).await {
+            state.source = Some(source);
+            return state;
+        }
+    }
+
+    if let Some(root) = system_npm_root(&node).await {
+        let entry = root.join(package_subdir(&spec.package)).join(&spec.entry);
+        if let Some(mut state) = probe_entry(&node, &entry, &spec.probe).await {
+            state.source = Some(KernelSource::System);
+            return state;
+        }
+    }
+
+    NativeKernelState {
+        installed: false,
+        source: None,
+        entry: None,
+        version: None,
     }
 }
 
@@ -183,15 +260,20 @@ pub async fn native_kernel_state(
 ///
 /// 幂等：已就绪则直接返回成功态，不重装、不改动既有安装。
 ///
-/// `progress` 由调用方提供，用于把 npm 的实时输出转给界面（复用壳层既有的
-/// 日志回流习惯）；本模块不关心它如何展示。
+/// 执行走与插件安装**同一条**路径（`run_plugin_install_with_transient_retry`）：
+/// 全局串行锁、可取消、瞬时文件系统重试、逐行 `preinstall-log` 回流，全部直接继承。
+/// 差别只有两处：
+/// - 命令是 npm 而不是 `dsh plugin`；
+/// - npm 输出里没有 pnpm 的 allowBuilds 标记，输出过滤自然不触发（不是特判）。
 pub async fn install_native_kernel(
     app: &AppHandle,
+    window: &tauri::WebviewWindow,
     spec: &NativeKernelSpec,
     progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+    // 输出行归属的卡片 id（清单声明的 `kernels[].id`）。界面按它把阶段与日志
+    // 路由到对应卡片；模块本身不认识这个值，只透传。
+    card: Option<String>,
 ) -> Result<NativeKernelState, String> {
-    let _guard = INSTALL.try_lock().map_err(|_| "native kernel installation already running")?;
-
     // 已就绪：直接返回，绝不覆盖。
     let current = native_kernel_state(app, spec).await;
     if current.installed {
@@ -221,37 +303,36 @@ pub async fn install_native_kernel(
         target.into(),
     ]);
 
-    let mut command = Command::new(&program);
-    command
-        .args(&args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    #[cfg(windows)]
-    command.creation_flags(0x08000000);
-    let mut child = command.spawn().map_err(|error| error.to_string())?;
-
-    // 逐行回流输出，让界面在数分钟的安装期间有真实进度（与插件安装同款习惯）。
-    let stdout_task = child.stdout.take().map(|stream| {
-        tokio::spawn(forward_lines(stream, progress.clone()))
-    });
-    let stderr_task = child.stderr.take().map(|stream| {
-        tokio::spawn(forward_lines(stream, progress.clone()))
-    });
-
-    let status = tokio::time::timeout(INSTALL_TIMEOUT, child.wait())
-        .await
-        .map_err(|_| "native kernel installation timed out")?
-        .map_err(|error| error.to_string())?;
-    if let Some(task) = stdout_task {
-        let _ = task.await;
+    // 程序名放在参数之前：`npm_command` 返回的是「用哪个可执行文件 + 前置参数」，
+    // 共享执行器只接受 node + args（与插件安装同一形态），因此把可执行文件吸收进
+    // 参数首项当且仅当它不是 node 本身。
+    let mut full_args: Vec<OsString> = Vec::new();
+    if program != node.as_os_str() {
+        full_args.push(program);
     }
-    if let Some(task) = stderr_task {
-        let _ = task.await;
-    }
-    if !status.success() {
-        return Err(format!("native kernel installation failed with {status}"));
+    full_args.extend(args);
+
+    // 与插件安装同一套环境：显式下传预检解析出的 node、捆绑 pnpm 的绝对路径与非
+    // TTY 所需开关。缺了这套，同一条机器上插件能装、内核会卡在找不到运行时。
+    let envs = crate::service::plugin::build_plugin_envs(app, false);
+    let owner = crate::service::plugin::new_process_owner();
+
+    let (exit_code, output, _last) = crate::service::plugin::run_plugin_install_with_transient_retry(
+        app,
+        &node,
+        &full_args,
+        &root,
+        &envs,
+        window,
+        "install",
+        None,
+        owner,
+        card,
+    )
+    .await?;
+    if exit_code != 0 {
+        let tail = if output.len() > 4000 { &output[output.len() - 4000..] } else { &output };
+        return Err(format!("native kernel installation failed with exit code {exit_code}\n{tail}"));
     }
 
     let state = native_kernel_state(app, spec).await;
@@ -259,23 +340,6 @@ pub async fn install_native_kernel(
         return Err("installed native kernel failed its protocol probe".into());
     }
     Ok(state)
-}
-
-/// 逐行读取一个输出流并把非空行交给进度回调。
-async fn forward_lines<R>(stream: R, progress: Option<Arc<dyn Fn(&str) + Send + Sync>>)
-where
-    R: tokio::io::AsyncRead + Unpin,
-{
-    use tokio::io::{AsyncBufReadExt, BufReader};
-    let mut lines = BufReader::new(stream).lines();
-    while let Ok(Some(line)) = lines.next_line().await {
-        let trimmed = line.trim_end();
-        if !trimmed.is_empty() {
-            if let Some(sink) = &progress {
-                sink(trimmed);
-            }
-        }
-    }
 }
 
 #[cfg(test)]

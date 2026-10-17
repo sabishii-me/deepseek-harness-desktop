@@ -166,6 +166,7 @@ async fn repair_with_pnpm_install(app_handle: &AppHandle, profile: &Path) -> Res
         &envs,
         &window,
         new_process_owner(),
+        None,
     )
     .await?;
     if exit_code != 0 {

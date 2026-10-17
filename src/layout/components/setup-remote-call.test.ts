@@ -77,3 +77,119 @@ describe('onboarding kind dispatch', () => {
     expect(new Set(kinds).size).toBe(3)
   })
 })
+
+/**
+ * 渲染规则（§5.5.1 R1–R3）的纯函数化验证。
+ *
+ * 组件本身的 DOM 断言走 client 项目；这里验证「规则本身」在任何配置下都成立，
+ * 与产品无关。
+ */
+
+/** R1：值为空的行必须被过滤掉（整行不渲染，而不是渲染空行）。 */
+function visibleFields(
+  spec: RemoteCallSpec,
+  state: Record<string, unknown>,
+): { path: string, value: string }[] {
+  const read = (path: string | undefined): unknown => (path === undefined ? undefined : state[path])
+  const text = (v: unknown): string =>
+    typeof v === 'string' ? v : typeof v === 'number' ? String(v) : ''
+  return (spec.fields ?? [])
+    .filter((field) => {
+      if (field.showWhen !== undefined && read(field.showWhen.path) !== field.showWhen.equals)
+        return false
+      return text(read(field.path)) !== ''
+    })
+    .map(field => ({ path: field.path, value: text(read(field.path)) }))
+}
+
+/** R3：同一时刻只取第一条成立的 action。 */
+function primaryAction(
+  spec: RemoteCallSpec,
+  state: Record<string, unknown>,
+): { method: string } | undefined {
+  const read = (path: string | undefined): unknown => (path === undefined ? undefined : state[path])
+  return (spec.actions ?? [])
+    .find(a => a.showWhen === undefined || read(a.showWhen.path) === a.showWhen.equals)
+}
+
+/** R2：只渲染 i18n 里存在的 key。 */
+function labelOf(key: string | undefined, available: Set<string>): string | null {
+  if (key === undefined || !available.has(key))
+    return null
+  return key
+}
+
+describe('render rules (R1–R3)', () => {
+  it('R1 drops a field whose value is empty even without showWhen', () => {
+    // 这正是线上截图的缺陷：无 label、无 showWhen、值为空，却渲染了一行。
+    const spec: RemoteCallSpec = {
+      namespace: 'n',
+      read: 'r',
+      done: { path: 's', equals: 'ok' },
+      fields: [{ path: 'organization' }],
+    }
+    expect(visibleFields(spec, {})).toEqual([])
+    expect(visibleFields(spec, { organization: 'acme' })).toEqual([
+      { path: 'organization', value: 'acme' },
+    ])
+  })
+
+  it('R1 keeps a field that carries a real value', () => {
+    const spec = genericSpec()
+    const rows = visibleFields(spec, { owner: 'acme', status: 'idle' })
+    expect(rows).toEqual([{ path: 'owner', value: 'acme' }])
+  })
+
+  it('R2 refuses to render an i18n key that does not exist', () => {
+    // 线上截图里按钮写的是 `preinstall.remote_cancel` 原文。
+    const available = new Set(['known.key'])
+    expect(labelOf('preinstall.remote_cancel', available)).toBeNull()
+    expect(labelOf('known.key', available)).toBe('known.key')
+    expect(labelOf(undefined, available)).toBeNull()
+  })
+
+  it('R3 renders exactly one action per state, never all of them', () => {
+    const spec = genericSpec()
+    expect(primaryAction(spec, { status: 'idle' })?.method).toBe('begin')
+    expect(primaryAction(spec, { status: 'pending' })?.method).toBe('abort')
+    // 没有任何 action 成立时不渲染按钮，而不是渲染一排。
+    expect(primaryAction(spec, { status: 'unknown' })).toBeUndefined()
+  })
+
+  it('R3 returns at most one even when several could match', () => {
+    const spec: RemoteCallSpec = {
+      namespace: 'n',
+      read: 'r',
+      done: { path: 's', equals: 'ok' },
+      actions: [
+        { method: 'first', label: 'a' },
+        { method: 'second', label: 'b' },
+      ],
+    }
+    expect(primaryAction(spec, {})?.method).toBe('first')
+  })
+})
+
+describe('state table', () => {
+  it('maps a configured value to its label and stays silent otherwise', () => {
+    const spec: RemoteCallSpec = {
+      namespace: 'n',
+      read: 'r',
+      done: { path: 'phase', equals: 'done' },
+      statusPath: 'phase',
+      states: [
+        { value: 'alpha', label: 'k.alpha' },
+        { value: 'beta', label: 'k.beta' },
+      ],
+    }
+    const available = new Set(['k.alpha', 'k.beta'])
+    const title = (phase: string): string | null => {
+      const hit = (spec.states ?? []).find(s => s.value === phase)
+      return hit === undefined ? null : labelOf(hit.label, available)
+    }
+    expect(title('alpha')).toBe('k.alpha')
+    expect(title('beta')).toBe('k.beta')
+    // 未知状态不编造文案。
+    expect(title('gamma')).toBeNull()
+  })
+})

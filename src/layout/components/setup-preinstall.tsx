@@ -1,6 +1,6 @@
 import type { IconComponent } from './loadable'
 import type { PluginProcess } from '@/store/modules/plugins'
-import type { OnboardingRemoteState, OnboardingStep, PreinstallPlugin } from '@/store/modules/preinstall'
+import type { OnboardingRemoteState, OnboardingStep, PreinstallKernel, PreinstallPlugin } from '@/store/modules/preinstall'
 import { ArrowUpRightFromSquare, ArrowUturnCcwLeft, Comments, Copy, Cubes3Overlap, LayoutSideContentLeft, PlugConnection, ShoppingCart, Xmark } from '@gravity-ui/icons'
 import { Button, Card, Checkbox, Chip, ScrollShadow, Spinner, Switch, Typography } from '@heroui/react'
 import { useIntervalFn, useMount } from '@reause/core'
@@ -225,41 +225,89 @@ function refusedVersions(process: PluginProcess): string {
   return (process.refusal?.versions ?? []).map(item => `${item.name}@${item.version}`).join('、')
 }
 
-/** 内核步骤：可选安装清单声明的内核，装完/跳过后继续启动。 */
+/**
+ * 内核步骤：可选安装清单声明的内核。
+ *
+ * 分层（与插件步骤的唯一区别，见 ONBOARDING-MECHANISM-v2 §5.4.5）：
+ * - **卡片内**：该内核自己的状态与阶段（进度层）——每张卡独立，互不覆盖；
+ * - **卡片外**：完整原始输出（日志层）——与插件步骤同一个 `LogPanel`、
+ *   同一个 `preinstall.logs`，装成功后仍可展开查看。
+ *
+ * 卡片内不出现任何原始命令行文本。阶段词是真实里程碑，不是按输出猜的百分比。
+ */
 function KernelStep({ installing }: { installing: boolean }) {
   const { t } = useTranslation()
   const preinstall = useStore(store.preinstall)
-  const busy = preinstall.kernelInstalling !== null
+  const busy = Object.keys(preinstall.kernelPhases).length > 0
+  const [showLogs, setShowLogs] = useState(false)
+
+  /** 卡片内的状态词：安装中取阶段，否则取已装/未装。 */
+  const statusOf = (kernel: PreinstallKernel): string => {
+    const phase = preinstall.kernelPhases[kernel.id]
+    if (phase === 'resolving')
+      return t('preinstall.kernel_phase_resolving')
+    if (phase === 'downloading')
+      return t('preinstall.kernel_phase_downloading')
+    if (phase === 'verifying' || phase === 'ready')
+      return t('preinstall.kernel_phase_verifying')
+    if (kernel.installed) {
+      return kernel.detectedVersion !== null
+        ? t('preinstall.kernel_installed', { version: kernel.detectedVersion })
+        : t('preinstall.kernel_installed', { version: '' })
+    }
+    return t('preinstall.kernel_optional')
+  }
+
+  const sourceOf = (kernel: PreinstallKernel): string | null =>
+    kernel.source === undefined || kernel.source === null
+      ? null
+      : t(`preinstall.kernel_source_${kernel.source}`)
+
   return (
     <div className="flex flex-col gap-3">
       <If cond={preinstall.kernels.length > 0} else={<Empty>{t('preinstall.kernel_empty')}</Empty>}>
         <div className="flex flex-col gap-2">
-          {preinstall.kernels.map(kernel => (
-            <Card key={kernel.id} className="flex items-center justify-between gap-3 bg-panel2 p-3 shadow-none">
-              <div className="flex min-w-0 flex-col gap-0.5">
-                <span className="truncate text-[13px] font-medium text-ink">{kernel.name}</span>
-                <span className="truncate text-[11px] text-muted">
-                  {kernel.installed
-                    ? t('preinstall.kernel_installed', { version: kernel.detectedVersion ?? kernel.version ?? '' })
-                    : t('preinstall.kernel_optional')}
-                </span>
-              </div>
-              <If cond={!kernel.installed}>
-                <Button
-                  size="sm"
-                  variant="primary"
-                  className="h-8 shrink-0"
-                  isDisabled={busy || installing}
-                  onPress={() => { void store.preinstall.installKernel(kernel.id) }}
-                >
-                  {preinstall.kernelInstalling === kernel.id ? t('preinstall.kernel_installing') : t('preinstall.kernel_install')}
-                </Button>
-              </If>
-              <If cond={kernel.installed}>
-                <Chip size="sm" variant="soft" color="default" className="shrink-0">{t('preinstall.installed')}</Chip>
-              </If>
-            </Card>
-          ))}
+          {preinstall.kernels.map((kernel) => {
+            const phase = preinstall.kernelPhases[kernel.id]
+            const installingThis = phase !== undefined
+            const source = sourceOf(kernel)
+            return (
+              <Card key={kernel.id} className="flex flex-col gap-2 bg-panel2 p-3 shadow-none">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 flex-col gap-0.5">
+                    <span className="truncate text-[13px] font-medium text-ink">{kernel.name}</span>
+                    <span className="truncate text-[11px] text-muted">{statusOf(kernel)}</span>
+                    {kernel.installed && source !== null && (
+                      <span className="truncate text-[11px] text-muted">{source}</span>
+                    )}
+                  </div>
+                  <If cond={!kernel.installed && !installingThis}>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      className="h-8 shrink-0"
+                      isDisabled={busy || installing}
+                      onPress={() => { void store.preinstall.installKernel(kernel.id) }}
+                    >
+                      {t('preinstall.kernel_install')}
+                    </Button>
+                  </If>
+                  <If cond={installingThis}>
+                    <Spinner size="sm" className="shrink-0" />
+                  </If>
+                  <If cond={kernel.installed}>
+                    <Chip size="sm" variant="soft" color="default" className="shrink-0">{t('preinstall.installed')}</Chip>
+                  </If>
+                </div>
+                {/* 进度层：不确定进度条。npm 不给百分比，不造假。 */}
+                <If cond={installingThis}>
+                  <div className="h-1 w-full overflow-hidden rounded-full bg-default-200">
+                    <div className="h-full w-1/2 animate-pulse rounded-full bg-primary" />
+                  </div>
+                </If>
+              </Card>
+            )
+          })}
         </div>
       </If>
       {preinstall.error !== '' && (
@@ -268,8 +316,19 @@ function KernelStep({ installing }: { installing: boolean }) {
           <p className="max-h-[120px] overflow-y-auto break-all font-mono text-[11px] text-muted">{preinstall.error}</p>
         </div>
       )}
+      {/* 日志层：始终在卡片外，与插件步骤同款折叠面板。 */}
       <If cond={preinstall.logs.length > 0}>
-        <LogPanel logs={preinstall.logs} />
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 w-fit"
+          onPress={() => setShowLogs(value => !value)}
+        >
+          {showLogs ? t('preinstall.hide_details') : t('preinstall.show_details')}
+        </Button>
+        <If cond={showLogs}>
+          <LogPanel logs={preinstall.logs} />
+        </If>
       </If>
       <div className="flex items-center justify-between gap-2">
         <Button className="h-8" size="sm" variant="tertiary" isDisabled={busy || installing} onPress={() => store.preinstall.backStep()}>
@@ -289,13 +348,21 @@ function KernelStep({ installing }: { installing: boolean }) {
  * 宿主只执行三条原语：
  * 1. **取值** —— 调 `read` 拿回一个对象；
  * 2. **比较** —— `{ path, equals }` 做字符串相等，用于判定完成与决定显隐；
- * 3. **渲染 / 调用** —— 按 `fields` 显示正文，按 `actions` 显示按钮并调 `method`。
+ * 3. **渲染 / 调用** —— 按 `fields` 显示正文，按 `actions` 调用 `method`。
  *
- * 代码里没有任何业务字面量：不知道 `phase`、不知道 `waiting`、不知道哪颗按钮是
- * 「登录」。换一个 provider（OAuth 设备授权、轮询某种就绪标志、……）只改配置。
+ * 代码里没有任何业务字面量：不知道状态值叫什么、不知道哪颗按钮是「登录」。
+ * 换一个 provider（OAuth 设备授权、轮询某种就绪标志、……）只改配置。
+ *
+ * 界面规则（ONBOARDING-MECHANISM-v2 §5.5.1）：
+ * - R1 值为空的行整行不渲染（不出现幽灵空白行）；
+ * - R2 只翻译存在的 i18n key，不存在则整条不渲染（绝不输出 key 原文）；
+ * - R3 同一时刻卡片内最多一个 action（取首条 `showWhen` 成立项）；
+ * - R4 顶部按 `states` 查表显示状态标题；
+ * - R5 字段是正文不是表单（无输入框、无表格线）；
+ * - R6 `open: true` 的字段渲染成按钮而不是裸 URL。
  */
 function RemoteCallStep({ step, installing }: { step: OnboardingStep, installing: boolean }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [remote, setRemote] = useState<OnboardingRemoteState | null>(null)
@@ -354,60 +421,110 @@ function RemoteCallStep({ step, installing }: { step: OnboardingStep, installing
     }
   }, [refresh, step.id])
 
+  /** 把字段值规整成可渲染的字符串；空值一律返回空串（R1 的依据）。 */
   const text = (value: unknown): string =>
     typeof value === 'string' ? value : typeof value === 'number' ? String(value) : ''
+
+  /** R2：key 不存在时返回 null，调用方整条跳过。 */
+  const labelOf = (key: string | undefined): string | null => {
+    if (key === undefined || !i18n.exists(key))
+      return null
+    return t(key)
+  }
+
+  /** R4：状态标题。查不到对应项时返回 null（不编造文案）。 */
+  const stateTitle = (): string | null => {
+    if (spec?.statusPath === undefined)
+      return null
+    const current = readValue(spec.statusPath)
+    const match = (spec.states ?? []).find(item => item.value === current)
+    return match === undefined ? null : labelOf(match.label)
+  }
+
+  // R1：值为空的字段整行不渲染。
+  const visibleFields = (spec?.fields ?? [])
+    .filter(field => visible(field.showWhen) && text(readValue(field.path)) !== '')
+
+  // R3：只取第一条成立的 action 作为卡片主按钮。
+  const primary = (spec?.actions ?? []).find(action => visible(action.showWhen))
+  const primaryLabel = primary === undefined ? null : labelOf(primary.label)
+
+  const title = stateTitle()
 
   return (
     <div className="flex flex-col gap-3">
       <Card className="flex flex-col gap-3 bg-panel2 p-4 shadow-none">
         {spec === undefined
-          ? <p className="text-[12px] text-muted">{t('preinstall.remote_unconfigured')}</p>
+          ? <p className="text-[12px] text-muted">{labelOf('preinstall.remote_unconfigured') ?? ''}</p>
           : (
               <>
-                {(spec.fields ?? []).map(field => (
-                  <If key={field.path} cond={visible(field.showWhen)}>
-                    <div className="flex flex-col gap-1">
-                      {field.label !== undefined && (
-                        <span className="text-[11px] text-muted">{t(field.label)}</span>
-                      )}
-                      <div className="flex items-center gap-2">
-                        <span className="break-all text-[12px] text-ink">{text(readValue(field.path))}</span>
-                        <If cond={field.copy}>
-                          <Button
-                            size="sm"
-                            variant="tertiary"
-                            className="h-7 w-fit shrink-0"
-                            onPress={() => { void navigator.clipboard.writeText(text(readValue(field.path))).catch(() => {}) }}
-                          >
-                            {t('preinstall.remote_copy')}
-                          </Button>
-                        </If>
-                      </div>
-                    </div>
-                  </If>
-                ))}
-                <div className="flex items-center justify-end gap-2">
-                  {(spec.actions ?? []).map(action => (
-                    <If key={action.method + action.label} cond={visible(action.showWhen)}>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        className="h-8"
-                        isDisabled={busy || installing}
-                        onPress={() => { void run(action.method) }}
-                      >
-                        {t(action.label)}
-                      </Button>
-                    </If>
-                  ))}
-                </div>
+                {title !== null && (
+                  <span className="text-[13px] font-medium text-ink">{title}</span>
+                )}
+                {visibleFields.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    {visibleFields.map((field) => {
+                      const value = text(readValue(field.path))
+                      const label = labelOf(field.label)
+                      return (
+                        <div key={field.path} className="flex flex-col gap-0.5">
+                          {label !== null && (
+                            <span className="text-[11px] text-muted">{label}</span>
+                          )}
+                          <div className="flex items-center gap-2">
+                            {/* R6：open 字段渲染成按钮，不铺裸 URL。 */}
+                            <If
+                              cond={field.open === true}
+                              else={(
+                                <span className="break-all font-mono text-[13px] text-ink">{value}</span>
+                              )}
+                            >
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                className="h-7 w-fit"
+                                onPress={() => { window.open(value, '_blank', 'noopener,noreferrer') }}
+                              >
+                                {labelOf('preinstall.remote_open') ?? value}
+                              </Button>
+                            </If>
+                            <If cond={field.copy === true && field.open !== true}>
+                              <Button
+                                size="sm"
+                                variant="tertiary"
+                                className="h-7 w-fit shrink-0"
+                                onPress={() => { void navigator.clipboard.writeText(value).catch(() => {}) }}
+                              >
+                                {labelOf('preinstall.remote_copy') ?? ''}
+                              </Button>
+                            </If>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+                {primary !== undefined && primaryLabel !== null && (
+                  <div className="flex justify-end">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="h-8"
+                      isDisabled={busy || installing}
+                      onPress={() => { void run(primary.method) }}
+                    >
+                      <If cond={busy}><Spinner size="sm" color="current" /></If>
+                      {primaryLabel}
+                    </Button>
+                  </div>
+                )}
               </>
             )}
       </Card>
 
       {error !== '' && (
         <div className="flex flex-col gap-1 rounded-md border border-danger/30 bg-danger/5 p-3">
-          <p className="text-xs font-medium text-danger">{t('preinstall.remote_failed')}</p>
+          <p className="text-xs font-medium text-danger">{labelOf('preinstall.remote_failed') ?? ''}</p>
           <p className="max-h-[120px] overflow-y-auto break-all font-mono text-[11px] text-muted">{error}</p>
         </div>
       )}
@@ -424,6 +541,7 @@ function RemoteCallStep({ step, installing }: { step: OnboardingStep, installing
     </div>
   )
 }
+
 export function PreinstallSetup() {
   const { t } = useTranslation()
   const preinstall = useStore(store.preinstall)

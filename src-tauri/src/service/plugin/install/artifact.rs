@@ -308,6 +308,7 @@ pub(super) async fn ensure_plugin_entry_built_with(
             envs,
             window,
             new_process_owner(),
+            None,
         )
         .await
         {

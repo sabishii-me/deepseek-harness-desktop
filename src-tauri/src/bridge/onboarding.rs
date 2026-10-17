@@ -249,11 +249,17 @@ mod tests {
             namespace: "any-namespace".to_string(),
             read: "readState".to_string(),
             done: RemoteCondition { path: "state".to_string(), equals: "ok".to_string() },
+            status_path: Some("state".to_string()),
+            states: vec![crate::config::onboarding::RemoteStateView {
+                value: "signed-out".to_string(),
+                label: "preinstall.state_signed_out".to_string(),
+            }],
             fields: vec![RemoteField {
                 show_when: None,
                 path: "organisation".to_string(),
                 label: None,
                 copy: false,
+                open: false,
             }],
             actions: vec![RemoteAction {
                 show_when: Some(RemoteCondition {

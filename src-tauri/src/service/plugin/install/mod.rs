@@ -446,6 +446,7 @@ async fn install_with_cancel(
         "install",
         cancel.as_ref(),
         owner,
+        None,
     )
     .await?;
 
@@ -472,6 +473,7 @@ async fn install_with_cancel(
                 "install",
                 cancel.as_ref(),
                 owner,
+                None,
             )
             .await?
         } else {
@@ -722,7 +724,7 @@ pub async fn allow_version_exemptions(
             entry.runtime_version
         );
         let (exit_code, output) =
-            run_plugin_process(&node, &args, &cwd, &envs, &window, owner).await?;
+            run_plugin_process(&node, &args, &cwd, &envs, &window, owner, None).await?;
         if exit_code != 0 {
             let detail = pick_error_message(&output, None);
             log::error!(
@@ -776,6 +778,7 @@ async fn run_plugin_with_allow_build_retry(
     action: &str,
     cancel: Option<&tokio::sync::watch::Receiver<bool>>,
     owner: ProcessOwner,
+    target: Option<String>,
 ) -> Result<(i32, String, String), String> {
     let _operation_guard = acquire_operation_lock().await;
     // 上一次被强杀的安装（取消 / 刷新 / 退出）会在 profile 里留下 dsh 的孤儿写锁，
@@ -788,7 +791,7 @@ async fn run_plugin_with_allow_build_retry(
         if cancel.is_some_and(|signal| *signal.borrow()) {
             return Err("PLUGIN_OPERATION_CANCELLED: plugin operation was cancelled".to_string());
         }
-        let (code, captured) = run_plugin_process(node, args, cwd, envs, window, owner).await?;
+        let (code, captured) = run_plugin_process(node, args, cwd, envs, window, owner, target.clone()).await?;
         if cancel.is_some_and(|signal| *signal.borrow()) {
             return Err("PLUGIN_OPERATION_CANCELLED: plugin operation was cancelled".to_string());
         }
@@ -842,7 +845,7 @@ async fn run_plugin_with_allow_build_retry(
 /// 识别到瞬时失败后再跑一次完整命令（有界，见 [`TRANSIENT_FS_RETRIES`]），每次重试前
 /// 短暂休眠等 reparse point 落定 / 杀软扫完；该失败是概率性的，重试即大概率越过。
 #[allow(clippy::too_many_arguments)]
-async fn run_plugin_install_with_transient_retry(
+pub(crate) async fn run_plugin_install_with_transient_retry(
     app_handle: &AppHandle,
     node: &Path,
     args: &[OsString],
@@ -852,12 +855,13 @@ async fn run_plugin_install_with_transient_retry(
     action: &str,
     cancel: Option<&tokio::sync::watch::Receiver<bool>>,
     owner: ProcessOwner,
+    target: Option<String>,
 ) -> Result<(i32, String, String), String> {
     let mut attempt = 0usize;
     let mut policy_attempt = 0usize;
     loop {
         let (exit_code, output, last_attempt) = run_plugin_with_allow_build_retry(
-            app_handle, node, args, cwd, envs, window, action, cancel, owner,
+            app_handle, node, args, cwd, envs, window, action, cancel, owner, target.clone(),
         )
         .await?;
         // 先判网络类：pnpm 把「元数据拉不到」渲染成供应链违规，重跑整条命令最有效。
