@@ -11,6 +11,7 @@ const TAILWINDCSS_GENERATED = `
     --font-weight-normal: 400;
     --font-weight-medium: 500;
     --font-weight-semibold: 600;
+    --animate-spin: spin 1s linear infinite;
     --default-transition-duration: 150ms;
     --default-transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   }
@@ -609,6 +610,9 @@ const TAILWINDCSS_GENERATED = `
   }
   .transform {
     transform: var(--tw-rotate-x,) var(--tw-rotate-y,) var(--tw-rotate-z,) var(--tw-skew-x,) var(--tw-skew-y,);
+  }
+  .animate-spin {
+    animation: var(--animate-spin);
   }
   .cursor-\\[inherit\\] {
     cursor: inherit;
@@ -2257,6 +2261,11 @@ const TAILWINDCSS_GENERATED = `
       color: var(--dsw-alias-label-tertiary);
     }
   }
+  .motion-reduce\\:animate-none {
+    @media (prefers-reduced-motion: reduce) {
+      animation: none;
+    }
+  }
   .max-\\[1100px\\]\\:\\[--detail-gutter\\:20px\\] {
     @media (width < 1100px) {
       --detail-gutter: 20px;
@@ -3004,6 +3013,11 @@ const TAILWINDCSS_GENERATED = `
   syntax: "*";
   initial-value: "";
   inherits: false;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 @layer properties {
   @supports ((-webkit-hyphens: none) and (not (margin-trim: inline))) or ((-moz-orient: inline) and (not (color:rgb(from red r g b)))) {
