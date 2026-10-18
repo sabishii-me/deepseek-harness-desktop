@@ -95,13 +95,12 @@ pub enum KernelSource {
 
 /// 系统全局 npm 根（`npm root -g` 的输出）。
 ///
-/// 不自建包发现逻辑：复用用户环境的 npm 来回答「全局包在哪」，避免在 Windows /
-/// Unix / nvm / pnpm / volta 等布局上各自猜测。命令失败时返回 None，探测继续。
+/// 用**用户的** npm 回答，不是随包那一份：随包的 npm 认为自己就是全局根
+/// （`<runtime>/node_modules`），拿它问只会得到应用自己的目录，用户早先装好的
+/// 东西永远发现不了。
 async fn system_npm_root(node: &Path) -> Option<PathBuf> {
-    let (program, args) = npm_command(node);
-    let mut command = tokio::process::Command::new(&program);
+    let mut command = tokio::process::Command::new(system_npm_program(node));
     command
-        .args(&args)
         .arg("root")
         .arg("-g")
         .stdin(Stdio::null())
@@ -123,6 +122,69 @@ async fn system_npm_root(node: &Path) -> Option<PathBuf> {
     } else {
         Some(PathBuf::from(text))
     }
+}
+
+/// 探测系统已装包时该用哪个 npm 可执行文件。
+///
+/// 优先用户自己的 npm（PATH 上的 `npm` / `npm.cmd`）；它不在时回退随包 node 下的
+/// npm-cli.js——那样至少能问出随包根目录，不会比不问更差。
+fn system_npm_program(node: &Path) -> OsString {
+    let user = if cfg!(windows) { "npm.cmd" } else { "npm" };
+    if which_on_path(user).is_some() {
+        return OsString::from(user);
+    }
+    let (program, args) = npm_command(node);
+    let mut combined = OsString::from(program);
+    for arg in args {
+        combined.push(" ");
+        combined.push(arg);
+    }
+    combined
+}
+
+/// PATH 上是否存在某个可执行文件（不执行它）。
+fn which_on_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// 系统全局包目录的约定位置：用户 npm 的默认 prefix 与显式配置的 prefix。
+///
+/// 与 [`crate::service::cli::path`] 发现 pnpm 时用的是同一批目录，因此不会出现
+/// 「能装、但发现不了」的错位。
+fn standard_global_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    let mut push = |dir: PathBuf| {
+        let root = dir.join("node_modules");
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
+    };
+    for variable in ["NPM_CONFIG_PREFIX", "npm_config_prefix"] {
+        if let Some(value) = std::env::var_os(variable) {
+            push(PathBuf::from(value));
+        }
+    }
+    #[cfg(windows)]
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        push(PathBuf::from(appdata).join("npm"));
+    }
+    #[cfg(not(windows))]
+    {
+        if let Some(home) = std::env::var_os("HOME") {
+            push(PathBuf::from(&home).join(".npm-global"));
+            push(PathBuf::from(&home).join(".local"));
+        }
+        push(PathBuf::from("/usr/local"));
+        push(PathBuf::from("/usr"));
+    }
+    roots
 }
 
 /// 包名在 `node_modules` 下的相对目录（`@scope/name` → `@scope/name`）。
@@ -240,7 +302,19 @@ pub async fn native_kernel_state(
         }
     }
 
+    // 系统全局：先问用户 npm 的真实 prefix，再逐个试约定目录。
+    // 只问 npm 不够——PATH 上没有 npm 的机器（或 npm 答非所问）也要能发现已装的包，
+    // 而用户在装好之后被要求再装一次是不可接受的。
+    let mut system_roots: Vec<PathBuf> = Vec::new();
     if let Some(root) = system_npm_root(&node).await {
+        system_roots.push(root);
+    }
+    for root in standard_global_roots() {
+        if !system_roots.contains(&root) {
+            system_roots.push(root);
+        }
+    }
+    for root in system_roots {
         let entry = root.join(package_subdir(&spec.package)).join(&spec.entry);
         if let Some(mut state) = probe_entry(&node, &entry, &spec.probe).await {
             state.source = Some(KernelSource::System);
@@ -345,6 +419,30 @@ pub async fn install_native_kernel(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 系统全局目录只用来**发现**已装的包，不能把用户目录里的东西当成应用自己的。
+    #[test]
+    fn standard_global_roots_are_conventional_node_modules_dirs() {
+        let roots = standard_global_roots();
+        assert!(!roots.is_empty(), "must offer at least one conventional root");
+        for root in &roots {
+            assert_eq!(root.file_name().and_then(|n| n.to_str()), Some("node_modules"), "{root:?}");
+        }
+        // 顺序稳定且无重复：探测按顺序命中即停。
+        let mut seen = std::collections::HashSet::new();
+        for root in &roots {
+            assert!(seen.insert(root.clone()), "duplicate root {root:?}");
+        }
+    }
+
+    /// 包名拆成 `node_modules` 下的相对路径；作用域名保留为一级目录。
+    #[test]
+    fn package_subdir_matches_node_modules_layout() {
+        assert_eq!(package_subdir("jouzu"), PathBuf::from("jouzu"));
+        assert_eq!(package_subdir("@scope/name"), PathBuf::from("@scope").join("name"));
+        // 反斜杠同样拆分，避免把一个名字当成两级目录。
+        assert_eq!(package_subdir("@scope\\name"), PathBuf::from("@scope").join("name"));
+    }
 
     #[test]
     fn managed_root_is_derived_from_package_without_product_knowledge() {

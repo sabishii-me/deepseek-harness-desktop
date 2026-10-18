@@ -9,7 +9,7 @@ export type BackendId = 'dsh' | 'codex' | 'claude' | 'jouzu'
  * this list, so adding a kernel does not require hunting down stray literal
  * unions.
  */
-export const NATIVE_BACKENDS = ['codex', 'claude', 'jouzu'] as const satisfies readonly Exclude<BackendId, 'dsh'>[]
+export const NATIVE_BACKENDS = ['jouzu', 'codex', 'claude'] as const satisfies readonly Exclude<BackendId, 'dsh'>[]
 
 /** A selectable native kernel (every backend that is not the official one). */
 export type NativeBackend = (typeof NATIVE_BACKENDS)[number]

@@ -74,7 +74,8 @@ describe('hero kernel picker', () => {
     expect(chip.textContent).toContain('Select kernel')
     expect((chip as HTMLButtonElement).disabled).toBe(false)
     fireEvent.click(chip)
-    expect(view.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['Codex', 'Claude · Not installed', 'Jouzu · Not installed'])
+    // 第一个是本产品主推的内核；顺序即选择器顺序（`NATIVE_BACKENDS` 的注释写明）。
+    expect(view.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['Jouzu · Not installed', 'Codex', 'Claude · Not installed'])
     expect(view.getByRole('menu').querySelectorAll('[aria-checked="true"]')).toHaveLength(0)
   })
 

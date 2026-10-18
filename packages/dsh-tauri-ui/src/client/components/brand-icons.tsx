@@ -15,3 +15,42 @@ export function ClaudeIcon(props: ComponentProps<'svg'>): ReactElement {
     </svg>
   )
 }
+
+/**
+ * Jouzu 官方标志：点阵图案。
+ *
+ * 坐标取自 `jouzu/packaging/windows/jouzu.svg`（`viewBox="0 0 11 11"`，25 个圆点），
+ * **一个都不改**——点阵本身就是品牌识别特征。官方版本每个圆点各带颜色；这里去掉
+ * `fill` 让它们继承 `currentColor`，与 `GptIcon` / `ClaudeIcon` 一样跟随主题色。
+ */
+export function JouzuIcon(props: ComponentProps<'svg'>): ReactElement {
+  return (
+    <svg width={16} height={16} viewBox="0 0 11 11" fill="currentColor" aria-hidden focusable="false" {...props}>
+      <circle cx="2.5" cy="2" r="0.43" />
+      <circle cx="3.5" cy="2" r="0.43" />
+      <circle cx="4.5" cy="2" r="0.43" />
+      <circle cx="4.5" cy="3" r="0.43" />
+      <circle cx="4.5" cy="4" r="0.43" />
+      <circle cx="4.5" cy="5" r="0.43" />
+      <circle cx="1.5" cy="6" r="0.43" />
+      <circle cx="1.5" cy="7" r="0.43" />
+      <circle cx="2.5" cy="8" r="0.43" />
+      <circle cx="3.5" cy="8" r="0.43" />
+      <circle cx="4.5" cy="6" r="0.43" />
+      <circle cx="4.5" cy="7" r="0.43" />
+      <circle cx="6.5" cy="2" r="0.43" />
+      <circle cx="7.5" cy="2" r="0.43" />
+      <circle cx="7.5" cy="5" r="0.43" />
+      <circle cx="8.5" cy="2" r="0.43" />
+      <circle cx="8.5" cy="4" r="0.43" />
+      <circle cx="9.5" cy="2" r="0.43" />
+      <circle cx="9.5" cy="3" r="0.43" />
+      <circle cx="6.5" cy="7" r="0.43" />
+      <circle cx="6.5" cy="8" r="0.43" />
+      <circle cx="7.5" cy="6" r="0.43" />
+      <circle cx="7.5" cy="8" r="0.43" />
+      <circle cx="8.5" cy="8" r="0.43" />
+      <circle cx="9.5" cy="8" r="0.43" />
+    </svg>
+  )
+}
