@@ -245,8 +245,26 @@ export const preinstall = defineStore({
       }
       await this.completeStep(step.id)
       console.debug('[onboarding] after complete', { current: this.onboarding?.current ?? null, finished: this.onboarding?.finished, flowPending: this.flowPending })
-      if (this.onboarding === null || this.onboarding.current === null)
+      if (this.onboarding === null || this.onboarding.current === null) {
         await this.finish()
+        return
+      }
+      // `remote-call` 步骤要访问本地服务（探状态、登录）。服务此前只在收尾时
+      // 启动，因此**全新安装**的这一步必然连不上——插件全是随包自带的、没有需要
+      // 安装的东西，`finish()` 之前服务根本没起来。
+      if (this.currentStep()?.kind === 'remote-call')
+        await this.ensureServiceRunning()
+    },
+
+    /**
+     * 确保本地服务在跑，供需要访问它的步骤使用。
+     *
+     * 幂等：已健康则直接返回；后端对重复启动也有 `has_owned_process` 保护。
+     */
+    async ensureServiceRunning(): Promise<void> {
+      if (harness.serviceHealthy && harness.serviceRunning)
+        return
+      await harness.launchAndWait()
     },
 
     /** 预装安装日志流：dsh plugin 进程输出逐行追加 */
