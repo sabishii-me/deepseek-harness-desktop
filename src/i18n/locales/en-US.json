@@ -446,6 +446,7 @@
   "preinstall.remote_sign_in": "Sign in",
   "preinstall.remote_sign_out": "Sign out",
   "preinstall.remote_signing_in": "Signing in…",
+  "preinstall.remote_starting": "Starting the service…",
   "preinstall.remote_unconfigured": "This step is not configured",
   "preinstall.remote_waiting": "Waiting for authorization…",
   "preinstall.restarting_hint": "[harness] Restarting the service, please wait…",

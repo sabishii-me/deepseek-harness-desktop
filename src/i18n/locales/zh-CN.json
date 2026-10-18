@@ -446,6 +446,7 @@
   "preinstall.remote_sign_in": "登录",
   "preinstall.remote_sign_out": "登出",
   "preinstall.remote_signing_in": "登录中…",
+  "preinstall.remote_starting": "正在启动服务…",
   "preinstall.remote_unconfigured": "此步骤未配置",
   "preinstall.remote_waiting": "等待授权…",
   "preinstall.restarting_hint": "[harness] 正在重启服务，请稍候…",
