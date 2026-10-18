@@ -147,23 +147,35 @@ function bundleOwnPackage(spec: OwnPackage): void {
 for (const spec of OWN_PACKAGES)
   bundleOwnPackage(spec)
 
-// 内核包整体拷入（不只是 dist）。运行期依赖由它自己的 `dsh.runtimeDependencies`
-// 声明，随清单一起原样复制，构建期不改写任何字段——开发构建读的是源码清单
-// （`bundled_plugin_dir` 的开发覆盖），改写随包副本只会让两种构建行为不一致。
+// 内核包按它自己 `package.json` 的 `files` 拷入，再加上清单本身。
+//
+// 不手写白名单：漏一个条目就会打出一个「装得上、启动即失败」的包——曾经漏掉
+// `cordis.patch.yml`，dsh 校验插件时读不到 overlay，整个预装阶段直接拒绝安装。
+// `files` 是包自己声明的发布内容，与之保持一致才是唯一不会漂移的做法。
+// 运行期依赖由 `dsh.runtimeDependencies` 声明，随清单原样复制，构建期不改写
+// 任何字段——开发构建读的是源码清单（`bundled_plugin_dir` 的开发覆盖）。
 {
   const kernelSource = join(repo, 'packages/dsh-tauri-kernel')
   const kernelTarget = join(modules, 'dsh-tauri-kernel')
+  const manifestPath = join(kernelSource, 'package.json')
+  if (!existsSync(manifestPath))
+    throw new Error(`dsh-tauri-kernel package.json missing: ${manifestPath}`)
+  const kernelManifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  const published = Array.isArray(kernelManifest.files) ? kernelManifest.files : []
+  if (published.length === 0)
+    throw new Error('dsh-tauri-kernel declares no `files`; refusing to guess its contents')
   rmSync(kernelTarget, { recursive: true, force: true })
   mkdirSync(kernelTarget, { recursive: true })
-  for (const entry of ['dist', 'package.json', 'README.md', 'LICENSE']) {
+  for (const entry of [...published, 'package.json']) {
     const from = join(kernelSource, entry)
-    if (!existsSync(from)) {
-      if (entry === 'package.json')
-        throw new Error(`dsh-tauri-kernel package.json missing: ${from}`)
-      continue
-    }
+    if (!existsSync(from))
+      throw new Error(`dsh-tauri-kernel declares ${entry} but it does not exist: ${from}`)
     cpSync(from, join(kernelTarget, entry), { recursive: true })
   }
+  // 清单声明的 overlay 必须真的在包里，否则 dsh 安装阶段会拒绝这个插件。
+  const overlay = kernelManifest.dsh?.bundle?.patch
+  if (typeof overlay === 'string' && !existsSync(join(kernelTarget, overlay)))
+    throw new Error(`dsh-tauri-kernel overlay ${overlay} missing from the bundled package`)
 }
 function digest(dir: string): string {
  const hash = createHash('sha256')
