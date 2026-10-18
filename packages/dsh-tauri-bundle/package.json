@@ -15,6 +15,7 @@
     "dsh-tauri-rightclick": "workspace:*",
     "dsh-tauri-scheduler": "workspace:*",
     "dsh-tauri-ui": "workspace:*",
-    "dsh-tauri-worktree": "workspace:*"
+    "dsh-tauri-worktree": "workspace:*",
+    "zod": "catalog:utils"
   }
 }

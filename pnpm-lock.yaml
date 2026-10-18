@@ -1032,6 +1032,9 @@ importers:
       dsh-tauri-worktree:
         specifier: workspace:*
         version: link:../dsh-tauri-worktree
+      zod:
+        specifier: catalog:utils
+        version: 4.4.3
 
   packages/dsh-tauri-experimental:
     dependencies:
