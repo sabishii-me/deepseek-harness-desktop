@@ -77,6 +77,8 @@ export const preinstall = defineStore({
      * （例如用户之后删光模型适配器，核心仍会重新要求配置）。
      */
     showedOnboarding: false,
+    /** 收尾只做一次：`finish()` 会重启服务，重复执行会让界面反复跳回等待态。 */
+    finishedOnce: false,
   }),
   actions: {
     /** 拉取预装插件列表（含已安装检测），供首次启动引导界面渲染 */    async load(): Promise<PreinstallPlugin[]> {
@@ -245,26 +247,11 @@ export const preinstall = defineStore({
       }
       await this.completeStep(step.id)
       console.debug('[onboarding] after complete', { current: this.onboarding?.current ?? null, finished: this.onboarding?.finished, flowPending: this.flowPending })
-      if (this.onboarding === null || this.onboarding.current === null) {
+      const next = this.currentStep()
+      // 需要访问本地服务的步骤（`remote-call`）必须先让服务跑起来；`finish()` 正是
+      // 启动点，而它现在会保留引导层，所以这些步骤仍在同一套连续界面里完成。
+      if (next === null || next.kind === 'remote-call')
         await this.finish()
-        return
-      }
-      // `remote-call` 步骤要访问本地服务（探状态、登录）。服务此前只在收尾时
-      // 启动，因此**全新安装**的这一步必然连不上——插件全是随包自带的、没有需要
-      // 安装的东西，`finish()` 之前服务根本没起来。
-      if (this.currentStep()?.kind === 'remote-call')
-        await this.ensureServiceRunning()
-    },
-
-    /**
-     * 确保本地服务在跑，供需要访问它的步骤使用。
-     *
-     * 幂等：已健康则直接返回；后端对重复启动也有 `has_owned_process` 保护。
-     */
-    async ensureServiceRunning(): Promise<void> {
-      if (harness.serviceHealthy && harness.serviceRunning)
-        return
-      await harness.launchAndWait()
     },
 
     /** 预装安装日志流：dsh plugin 进程输出逐行追加 */
@@ -423,12 +410,19 @@ export const preinstall = defineStore({
      * 分开，是因为收尾可能在最后一步之后发生，也可能是外部（如启动流程）触发。
      */
     async finish() {
-      // 先撤掉引导层与 preinstall 状态，再等服务就绪。
+      // 幂等：收尾可能被多处触发（本步推进、界面挂载时的自愈、启动流程），
+      // 而它会重新走一次 `launchAndWait()`——那会把服务健康位重置，界面随之在
+      // 「服务等待」和「正常」之间来回跳。已经收过尾就直接返回。
+      if (this.finishedOnce)
+        return
+      this.finishedOnce = true
+      // 先撤掉 preinstall 分支、再等服务就绪；**但保留引导层**。
       //
-      // 顺序很重要：`continueStartup` 要等到服务健康（数秒到数十秒），这期间如果
-      // 壳层还停在 `status: 'preinstall'`，用户看到的是一个所有步骤内容都已消失的
-      // 空壳——既没有按钮，也无从重试。进度已经写完，界面本来就该切到启动页。
-      this.flowPending = false
+      // 计划 §1：服务启动 ≠ 用户可见。`plugins`/`kernel` 在服务启动前完成，之后
+      // 必须启动服务才能做模型适配；那一步由 `showFlow` 覆盖层承载，用户看到的
+      // 仍是同一套连续界面。无条件把 `flowPending` 置 false 会让覆盖层永不出现，
+      // 而需要服务的步骤又已经在服务启动前跑完了。
+      this.syncFlow(this.onboarding)
       harness.status = 'starting'
       try {
         await this.continueStartup()
@@ -436,6 +430,8 @@ export const preinstall = defineStore({
       catch (err) {
         // 收尾失败必须可见：此时进度已写入，但界面还停在引导页，用户会以为卡死。
         console.error('[Harness] finish preinstall failed:', err)
+        // 失败要允许重试：否则一次偶发失败会让引导再也收不了尾。
+        this.finishedOnce = false
         this.error = String(err)
         this.pushLog(`[harness] 引导收尾失败：${String(err)}`)
         // 进度已经是「全部完成」，界面不应继续停在引导页：即使拉起服务失败，

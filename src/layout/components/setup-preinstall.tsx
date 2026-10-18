@@ -366,11 +366,6 @@ function RemoteCallStep({ step, installing }: { step: OnboardingStep, installing
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [remote, setRemote] = useState<OnboardingRemoteState | null>(null)
-  // 这一步的全部动作都打本地服务。服务尚未健康时探测必然失败，而那次失败只是
-  // 「还没起来」，不是真的错误——等它就好。把等待表达成界面状态，而不是让用户
-  // 先看到一条红色失败、过一会儿它自己又好了。
-  const harness = useStore(store.harness)
-  const waitingForService = !harness.serviceHealthy
 
   const spec = step.remote
   const readValue = useCallback(
@@ -404,15 +399,7 @@ function RemoteCallStep({ step, installing }: { step: OnboardingStep, installing
     }
   }, [spec, step.id])
 
-  useMount(() => {
-    if (!waitingForService)
-      void refresh()
-  })
-  // 服务刚就绪时补第一次探测：挂载那一刻它还没起来，`useMount` 里刻意没有发请求。
-  useWatch([waitingForService], () => {
-    if (!waitingForService && remote === null)
-      void refresh()
-  })
+  useMount(() => { void refresh() })
   // 轮询何时停：判定为完成**并且连续两次拿到相同的状态**才停。
   //
   // 「完成」只说明判定字段到位了，不保证同一时刻的展示字段都已填好——一个 provider
@@ -432,7 +419,7 @@ function RemoteCallStep({ step, installing }: { step: OnboardingStep, installing
     previous.current = signature
   })
   useIntervalFn(() => {
-    if (busy || stableReady || waitingForService)
+    if (busy || stableReady)
       return
     void refresh()
   }, spec?.pollMs ?? 1500)
@@ -487,11 +474,13 @@ function RemoteCallStep({ step, installing }: { step: OnboardingStep, installing
       <Card className="flex flex-col gap-3 bg-panel2 p-4 shadow-none">
         {spec === undefined
           ? <p className="text-[12px] text-muted">{labelOf('preinstall.remote_unconfigured') ?? ''}</p>
-          : waitingForService
+          : remote === null
+            // 还没读到状态：此刻没有任何可显示的内容（标题、字段、按钮都依赖它），
+            // 渲染空卡片会让人以为这一步是空的。如实说明正在读取。
             ? (
                 <div className="flex items-center gap-2">
                   <Spinner size="sm" />
-                  <span className="text-[12px] text-muted">{labelOf('preinstall.remote_starting') ?? ''}</span>
+                  <span className="text-[12px] text-muted">{labelOf('preinstall.remote_loading') ?? ''}</span>
                 </div>
               )
             : (
